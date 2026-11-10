@@ -1,0 +1,2 @@
+-keep class com.rafsan.ottobudget.data.local.** { *; }
+-dontwarn okhttp3.**

@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">OttoBudget</string>
+    <string name="widget_desc">View your daily spending average and quick-add transactions from your home screen.</string>
+</resources>
