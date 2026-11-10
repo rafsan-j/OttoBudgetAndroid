@@ -10,6 +10,6 @@ object Spacing {
     val MD = 16.dp
     val LG = 20.dp
     val XL = 28.dp
-    val DayCircle = 30.dp
+    val DayCircle = 32.dp
     val TouchMin = 48.dp
 }

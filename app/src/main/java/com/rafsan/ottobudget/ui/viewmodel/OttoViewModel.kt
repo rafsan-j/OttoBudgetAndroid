@@ -20,15 +20,88 @@ class OttoViewModel(application: Application) : AndroidViewModel(application) {
     val keywordRules = dao.observeKeywordRules().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val transactions = dao.observeTransactions().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val isDarkTheme = MutableStateFlow(false)
+    // Persisted Dark Mode loaded directly from SharedPreferences on app launch!
+    val isDarkTheme = MutableStateFlow(syncManager.isDarkMode)
     val showSplashWink = MutableStateFlow(true)
     val showOnboarding = MutableStateFlow(!syncManager.hasSeenOnboarding)
+
+    // PIN & Biometric Security StateFlows
+    val isPinLockEnabled = MutableStateFlow(syncManager.pinLockEnabled)
+    val isBiometricEnabled = MutableStateFlow(syncManager.biometricUnlockEnabled)
+    val isAppLocked = MutableStateFlow(syncManager.pinLockEnabled)
+
     val userName = MutableStateFlow(syncManager.userName)
     val monthlyBudgetTarget = MutableStateFlow(syncManager.monthlyBudget)
     val excludeMajorGlobal = MutableStateFlow(true)
     val autoSyncState = MutableStateFlow(syncManager.autoSyncEnabled)
     val lastSyncedText = MutableStateFlow(syncManager.lastSyncedLabel)
     val statusMessage = MutableStateFlow<String?>(null)
+
+    fun toggleDarkTheme() {
+        val next = !isDarkTheme.value
+        isDarkTheme.value = next
+        syncManager.isDarkMode = next
+    }
+
+    fun setDarkThemeExplicit(enabled: Boolean) {
+        isDarkTheme.value = enabled
+        syncManager.isDarkMode = enabled
+    }
+
+    fun saveOrUpdatePin(newPin: String, enableBiometric: Boolean = isBiometricEnabled.value) {
+        val clean = newPin.trim()
+        if (clean.length != 4 || clean.any { !it.isDigit() }) {
+            statusMessage.value = "PIN must be 4 digits"
+            return
+        }
+        syncManager.pinHash = syncManager.hashPinCode(clean)
+        syncManager.pinLockEnabled = true
+        syncManager.biometricUnlockEnabled = enableBiometric
+        isPinLockEnabled.value = true
+        isBiometricEnabled.value = enableBiometric
+        isAppLocked.value = false
+        statusMessage.value = "App PIN Lock enabled"
+    }
+
+    fun disablePinLock() {
+        syncManager.pinHash = ""
+        syncManager.pinLockEnabled = false
+        syncManager.biometricUnlockEnabled = false
+        isPinLockEnabled.value = false
+        isBiometricEnabled.value = false
+        isAppLocked.value = false
+        statusMessage.value = "App PIN Lock disabled"
+    }
+
+    fun toggleBiometricUnlock(enabled: Boolean) {
+        if (!isPinLockEnabled.value && enabled) {
+            statusMessage.value = "Set a 4-digit backup PIN first"
+            return
+        }
+        syncManager.biometricUnlockEnabled = enabled
+        isBiometricEnabled.value = enabled
+        statusMessage.value = if (enabled) "Biometric unlock enabled" else "Biometric unlock disabled"
+    }
+
+    fun tryUnlockWithPin(enteredPin: String): Boolean {
+        val ok = syncManager.verifyPinCode(enteredPin)
+        if (ok) {
+            isAppLocked.value = false
+        }
+        return ok
+    }
+
+    fun onBiometricUnlockSuccess() {
+        isAppLocked.value = false
+    }
+
+    fun lockAppNow() {
+        if (isPinLockEnabled.value) {
+            isAppLocked.value = true
+        } else {
+            statusMessage.value = "Enable a 4-digit PIN in Settings → Security first"
+        }
+    }
 
     fun clearStatusMessage() {
         statusMessage.value = null

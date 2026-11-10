@@ -20,7 +20,7 @@
             android:layout_weight="1"
             android:singleLine="true"
             android:text="OTTOBUDGET"
-            android:textColor="#848E9C"
+            android:textColor="#8A94A6"
             android:textSize="11sp"
             android:textStyle="bold" />
 
@@ -28,14 +28,14 @@
             android:id="@+id/widget_add_btn"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:background="#FCD535"
+            android:background="#6BD0C2"
             android:paddingLeft="12dp"
             android:paddingTop="4dp"
             android:paddingRight="12dp"
             android:paddingBottom="4dp"
             android:singleLine="true"
             android:text="+ Add"
-            android:textColor="#181A20"
+            android:textColor="#0B0E11"
             android:textSize="11sp"
             android:textStyle="bold" />
     </LinearLayout>
@@ -76,7 +76,7 @@
                 android:layout_height="wrap_content"
                 android:singleLine="true"
                 android:text="Offline-first personal finance"
-                android:textColor="#0ECB81"
+                android:textColor="#6BD0C2"
                 android:textSize="11sp" />
         </LinearLayout>
     </LinearLayout>

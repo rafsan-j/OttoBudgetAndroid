@@ -13,21 +13,23 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.rafsan.ottobudget.R
 
+// Signature App Icon Turquoise (#6BD0C2) replaces all yellow in Dark Mode!
 val OttoTurquoise = Color(0xFF6BD0C2)
+val OttoTurquoiseDeep = Color(0xFF45B3A4)
+val OttoTurquoiseSoftDark = Color(0xFF1A3332)
 val SoftLavenderPill = Color(0xFFE8DEF8)
 val SoftLavenderText = Color(0xFF1D192B)
-val BinanceGold = Color(0xFFFCD535)
 val BinanceGreen = Color(0xFF0ECB81)
 val BinanceRed = Color(0xFFF6465D)
 val BinanceDarkBg = Color(0xFF0B0E11)
-val BinanceDarkCard = Color(0xFF181A20)
-val BinanceDarkTrack = Color(0xFF2B3139)
+val BinanceDarkCard = Color(0xFF151921)
+val BinanceDarkTrack = Color(0xFF232934)
 val BinanceLightText = Color(0xFFEAECEF)
-val BinanceMutedText = Color(0xFF848E9C)
+val BinanceMutedText = Color(0xFF8A94A6)
 val TransferBlue = Color(0xFF3B82F6)
 val InkDark = Color(0xFF11141A)
 val MonochromeBoxLight = Color(0xFFECEEF2)
-val MonochromeBoxDark = Color(0xFF2B3139)
+val MonochromeBoxDark = Color(0xFF232934)
 
 val SansFontFamily = FontFamily(
     Font(R.font.sans_regular, FontWeight.Normal),
@@ -40,7 +42,7 @@ val SansFontFamily = FontFamily(
 private val CleanLightScheme = lightColorScheme(
     primary = InkDark,
     onPrimary = Color(0xFFFFFFFF),
-    secondary = BinanceGreen,
+    secondary = OttoTurquoiseDeep,
     tertiary = SoftLavenderPill,
     background = Color(0xFFF7F8FA),
     surface = Color(0xFFFFFFFF),
@@ -51,11 +53,12 @@ private val CleanLightScheme = lightColorScheme(
     outline = Color(0xFFE2E6EC)
 )
 
-private val BinanceDarkScheme = darkColorScheme(
-    primary = BinanceGold,
-    onPrimary = BinanceDarkCard,
+// Dark Mode uses OttoTurquoise (#6BD0C2) as Primary instead of yellow!
+private val OttoDarkScheme = darkColorScheme(
+    primary = OttoTurquoise,
+    onPrimary = InkDark,
     secondary = BinanceGreen,
-    tertiary = BinanceDarkTrack,
+    tertiary = OttoTurquoiseSoftDark,
     background = BinanceDarkBg,
     surface = BinanceDarkCard,
     surfaceVariant = BinanceDarkTrack,
@@ -65,7 +68,6 @@ private val BinanceDarkScheme = darkColorScheme(
     outline = BinanceDarkTrack
 )
 
-// Clean Sans-Serif Typography across ALL styles (fixes the monospace font on Out/In/Line/Move pills!)
 val OttoTypography = Typography(
     displayLarge = TextStyle(
         fontFamily = SansFontFamily,
@@ -120,7 +122,7 @@ fun OttoBudgetTheme(
     content: @Composable () -> Unit
 ) {
     MaterialTheme(
-        colorScheme = if (darkTheme) BinanceDarkScheme else CleanLightScheme,
+        colorScheme = if (darkTheme) OttoDarkScheme else CleanLightScheme,
         typography = OttoTypography,
         content = content
     )

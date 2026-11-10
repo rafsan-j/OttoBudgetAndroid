@@ -106,7 +106,7 @@ object SeedData {
             "jacket", "hoodie", "sweater", "cardigan", "turtle neck", "suit", "blazer",
             "formal dress", "dress", "saree", "salwar", "shoes", "sneakers", "loafers",
             "sandals", "slippers", "socks", "belt", "wallet", "tie", "watch", "glasses",
-            "sunglasses", " spectacles", "bag", "backpack", "luggage", "umbrella", "tech",
+            "sunglasses", "spectacles", "bag", "backpack", "luggage", "umbrella", "tech",
             "electronics", "phone", "smartphone", "laptop", "pc", "monitor", "keyboard",
             "mouse", "earbuds", "airpods", "headphones", "headset", "speaker", "charger",
             "adapter", "cable", "usb", "powerbank", "memory card", "ssd", "pendrive",

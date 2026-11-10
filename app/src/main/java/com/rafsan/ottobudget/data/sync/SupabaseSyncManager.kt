@@ -23,18 +23,49 @@ import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
-/**
- * Zero-Schema-Exposure Cloud Sync & Local Backup Manager:
- * - Never exposes internal SQL tables or requires the user to run a SQL schema script.
- * - Encrypts the entire local database state using AES-256-GCM derived from the user's key
- *   and auto-provisions a private Supabase Storage bucket (`otto_vault`) via REST API.
- */
 class SupabaseSyncManager(
     private val context: Context,
     private val dao: AppDao
 ) {
     private val prefs = context.getSharedPreferences("ottobudget_v6_prefs", Context.MODE_PRIVATE)
     private val client = OkHttpClient()
+
+    // Persistent Dark Mode Setting (survives app restarts!)
+    var isDarkMode: Boolean
+        get() = prefs.getBoolean("dark_mode_enabled", false)
+        set(value) {
+            prefs.edit().putBoolean("dark_mode_enabled", value).commit()
+        }
+
+    // PIN & Biometric App Lock Settings
+    var pinHash: String
+        get() = prefs.getString("security_pin_hash", "") ?: ""
+        set(value) {
+            prefs.edit().putString("security_pin_hash", value).commit()
+        }
+
+    var pinLockEnabled: Boolean
+        get() = prefs.getBoolean("security_pin_enabled", false) && pinHash.isNotEmpty()
+        set(value) {
+            prefs.edit().putBoolean("security_pin_enabled", value).commit()
+        }
+
+    var biometricUnlockEnabled: Boolean
+        get() = prefs.getBoolean("security_biometric_enabled", false)
+        set(value) {
+            prefs.edit().putBoolean("security_biometric_enabled", value).commit()
+        }
+
+    fun hashPinCode(rawPin: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(("otto_pin_v7_salt_" + rawPin.trim()).toByteArray(Charsets.UTF_8))
+        return Base64.encodeToString(digest, Base64.NO_WRAP)
+    }
+
+    fun verifyPinCode(rawPin: String): Boolean {
+        if (pinHash.isEmpty()) return true
+        return hashPinCode(rawPin) == pinHash
+    }
 
     var userName: String
         get() = prefs.getString("user_name", "User") ?: "User"
@@ -96,9 +127,10 @@ class SupabaseSyncManager(
 
     private suspend fun buildVaultJsonString(): String {
         val root = JSONObject()
-        root.put("version", 6)
+        root.put("version", 7)
         root.put("userName", userName)
         root.put("monthlyBudget", monthlyBudget)
+        root.put("isDarkMode", isDarkMode)
 
         val walletsArr = JSONArray()
         dao.getAllWalletsOnce().forEach { w ->
@@ -185,12 +217,6 @@ class SupabaseSyncManager(
         return txCount
     }
 
-    /**
-     * Zero-SQL Encrypted Vault Cloud Sync:
-     * 1. Auto-creates private storage bucket `otto_vault` via `/storage/v1/bucket` (ignores 400/409 if already exists).
-     * 2. Uploads encrypted single-blob vault to `/storage/v1/object/otto_vault/vault.enc` with `x-upsert: true`.
-     * Requires ZERO SQL schema setup from the user and never exposes internal table structures!
-     */
     suspend fun syncVaultToCloud(): Result<String> = withContext(Dispatchers.IO) {
         val url = supabaseUrl.trimEnd('/')
         val key = supabaseAnonKey
@@ -199,7 +225,6 @@ class SupabaseSyncManager(
         }
 
         runCatching {
-            // Step 1: Auto-provision private storage bucket `otto_vault` if not yet created
             val bucketJson = JSONObject().apply {
                 put("id", "otto_vault")
                 put("name", "otto_vault")
@@ -213,7 +238,6 @@ class SupabaseSyncManager(
                 .build()
             runCatching { client.newCall(createBucketReq).execute().close() }
 
-            // Step 2: Encrypt entire local database into opaque single-blob vault
             val plainJson = buildVaultJsonString()
             val encryptedBlob = encryptVaultPayload(plainJson, key)
 
