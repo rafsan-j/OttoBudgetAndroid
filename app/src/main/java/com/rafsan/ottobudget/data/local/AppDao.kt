@@ -33,6 +33,21 @@ interface AppDao {
     @Query("SELECT * FROM transactions ORDER BY date DESC, updatedAt DESC")
     suspend fun getAllTransactionsOnce(): List<TransactionEntity>
 
+    @Query("SELECT * FROM vault_goals ORDER BY createdAt ASC")
+    fun observeVaultGoals(): Flow<List<VaultGoalEntity>>
+
+    @Query("SELECT * FROM vault_goals ORDER BY createdAt ASC")
+    suspend fun getAllVaultGoalsOnce(): List<VaultGoalEntity>
+
+    @Query("SELECT * FROM recurring_rules ORDER BY dayOfMonth ASC")
+    fun observeRecurringRules(): Flow<List<RecurringRuleEntity>>
+
+    @Query("SELECT * FROM recurring_rules ORDER BY dayOfMonth ASC")
+    suspend fun getAllRecurringRulesOnce(): List<RecurringRuleEntity>
+
+    @Query("SELECT * FROM pending_sms_detections ORDER BY id DESC")
+    fun observePendingSmsDetections(): Flow<List<PendingSmsDetectionEntity>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertWallet(wallet: WalletEntity)
 
@@ -89,4 +104,43 @@ interface AppDao {
 
     @Query("DELETE FROM transactions")
     suspend fun clearAllTransactions()
+
+    // Vault Goals DAO
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertVaultGoal(goal: VaultGoalEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertVaultGoals(goals: List<VaultGoalEntity>)
+
+    @Query("DELETE FROM vault_goals WHERE id = :goalId")
+    suspend fun deleteVaultGoalById(goalId: String)
+
+    @Query("DELETE FROM transactions WHERE toWallet = :goalId AND (type = 'VAULT_LOCK' OR type = 'VAULT_RELEASE')")
+    suspend fun clearVaultAllocationsForGoal(goalId: String)
+
+    // Recurring Rules DAO
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertRecurringRule(rule: RecurringRuleEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertRecurringRules(rules: List<RecurringRuleEntity>)
+
+    @Query("UPDATE recurring_rules SET lastConfirmedPeriod = :period WHERE id = :ruleId")
+    suspend fun markRecurringRuleConfirmed(ruleId: String, period: String)
+
+    @Query("UPDATE recurring_rules SET enabled = :enabled WHERE id = :ruleId")
+    suspend fun setRecurringRuleEnabled(ruleId: String, enabled: Boolean)
+
+    @Query("DELETE FROM recurring_rules WHERE id = :ruleId")
+    suspend fun deleteRecurringRuleById(ruleId: String)
+
+    // Pending SMS / Notification Auto-Parser Detections DAO
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPendingSmsDetection(detection: PendingSmsDetectionEntity)
+
+    @Query("DELETE FROM pending_sms_detections WHERE id = :detectionId")
+    suspend fun deletePendingSmsDetection(detectionId: String)
+
+    @Query("DELETE FROM pending_sms_detections")
+    suspend fun clearAllPendingSmsDetections()
 }

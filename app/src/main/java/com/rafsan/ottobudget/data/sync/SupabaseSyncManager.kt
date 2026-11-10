@@ -30,31 +30,41 @@ class SupabaseSyncManager(
     private val prefs = context.getSharedPreferences("ottobudget_v6_prefs", Context.MODE_PRIVATE)
     private val client = OkHttpClient()
 
-    // Persistent Dark Mode Setting (survives app restarts!)
     var isDarkMode: Boolean
         get() = prefs.getBoolean("dark_mode_enabled", false)
-        set(value) {
-            prefs.edit().putBoolean("dark_mode_enabled", value).commit()
-        }
+        set(value) { prefs.edit().putBoolean("dark_mode_enabled", value).commit() }
 
-    // PIN & Biometric App Lock Settings
+    var monthlyCapEnabled: Boolean
+        get() = prefs.getBoolean("monthly_cap_enabled", true)
+        set(value) { prefs.edit().putBoolean("monthly_cap_enabled", value).commit() }
+
+    var recurringFeatureEnabled: Boolean
+        get() = prefs.getBoolean("recurring_feature_enabled", true)
+        set(value) { prefs.edit().putBoolean("recurring_feature_enabled", value).commit() }
+
+    var smsAutoParserEnabled: Boolean
+        get() = prefs.getBoolean("sms_auto_parser_enabled", false)
+        set(value) { prefs.edit().putBoolean("sms_auto_parser_enabled", value).commit() }
+
+    var vaultPinLockEnabled: Boolean
+        get() = prefs.getBoolean("vault_pin_lock_enabled", true)
+        set(value) { prefs.edit().putBoolean("vault_pin_lock_enabled", value).commit() }
+
+    var vaultStealthHideTab: Boolean
+        get() = prefs.getBoolean("vault_stealth_hide_tab", false)
+        set(value) { prefs.edit().putBoolean("vault_stealth_hide_tab", value).commit() }
+
     var pinHash: String
         get() = prefs.getString("security_pin_hash", "") ?: ""
-        set(value) {
-            prefs.edit().putString("security_pin_hash", value).commit()
-        }
+        set(value) { prefs.edit().putString("security_pin_hash", value).commit() }
 
     var pinLockEnabled: Boolean
         get() = prefs.getBoolean("security_pin_enabled", false) && pinHash.isNotEmpty()
-        set(value) {
-            prefs.edit().putBoolean("security_pin_enabled", value).commit()
-        }
+        set(value) { prefs.edit().putBoolean("security_pin_enabled", value).commit() }
 
     var biometricUnlockEnabled: Boolean
         get() = prefs.getBoolean("security_biometric_enabled", false)
-        set(value) {
-            prefs.edit().putBoolean("security_biometric_enabled", value).commit()
-        }
+        set(value) { prefs.edit().putBoolean("security_biometric_enabled", value).commit() }
 
     fun hashPinCode(rawPin: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
@@ -127,9 +137,10 @@ class SupabaseSyncManager(
 
     private suspend fun buildVaultJsonString(): String {
         val root = JSONObject()
-        root.put("version", 7)
+        root.put("version", 8)
         root.put("userName", userName)
         root.put("monthlyBudget", monthlyBudget)
+        root.put("monthlyCapEnabled", monthlyCapEnabled)
         root.put("isDarkMode", isDarkMode)
 
         val walletsArr = JSONArray()
@@ -159,6 +170,27 @@ class SupabaseSyncManager(
         }
         root.put("rules", rulesArr)
 
+        val goalsArr = JSONArray()
+        dao.getAllVaultGoalsOnce().forEach { g ->
+            goalsArr.put(JSONObject().apply {
+                put("id", g.id); put("title", g.title); put("targetAmount", g.targetAmount)
+                put("allowedWallets", g.allowedWallets); put("minWalletFloor", g.minWalletFloor)
+                put("autoRuleType", g.autoRuleType); put("iconName", g.iconName)
+            })
+        }
+        root.put("vaultGoals", goalsArr)
+
+        val recArr = JSONArray()
+        dao.getAllRecurringRulesOnce().forEach { rr ->
+            recArr.put(JSONObject().apply {
+                put("id", rr.id); put("title", rr.title); put("type", rr.type); put("amount", rr.amount)
+                put("category", rr.category); put("wallet", rr.wallet); put("dayOfMonth", rr.dayOfMonth)
+                put("notifyHour", rr.notifyHour); put("notifyMinute", rr.notifyMinute)
+                put("enabled", rr.enabled); put("lastConfirmedPeriod", rr.lastConfirmedPeriod)
+            })
+        }
+        root.put("recurringRules", recArr)
+
         val txArr = JSONArray()
         dao.getAllTransactionsOnce().forEach { t ->
             txArr.put(JSONObject().apply {
@@ -175,6 +207,7 @@ class SupabaseSyncManager(
         val root = JSONObject(jsonStr)
         if (root.has("userName")) userName = root.optString("userName", userName)
         if (root.has("monthlyBudget")) monthlyBudget = root.optDouble("monthlyBudget", monthlyBudget)
+        if (root.has("monthlyCapEnabled")) monthlyCapEnabled = root.optBoolean("monthlyCapEnabled", monthlyCapEnabled)
 
         root.optJSONArray("wallets")?.let { arr ->
             val list = mutableListOf<WalletEntity>()
@@ -201,6 +234,24 @@ class SupabaseSyncManager(
                 list.add(KeywordRuleEntity(o.getString("keyword"), o.getString("category"), o.getString("kind"), o.optString("walletHint", "Cash"), o.optInt("priority", 85)))
             }
             if (list.isNotEmpty()) dao.insertKeywordRules(list)
+        }
+
+        root.optJSONArray("vaultGoals")?.let { arr ->
+            val list = mutableListOf<VaultGoalEntity>()
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                list.add(VaultGoalEntity(o.getString("id"), o.getString("title"), o.getDouble("targetAmount"), o.optString("allowedWallets", "bKash,Bank Card,Cash"), o.optDouble("minWalletFloor", 0.0), o.optString("autoRuleType", "MANUAL"), o.optString("iconName", "vault")))
+            }
+            if (list.isNotEmpty()) dao.insertVaultGoals(list)
+        }
+
+        root.optJSONArray("recurringRules")?.let { arr ->
+            val list = mutableListOf<RecurringRuleEntity>()
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                list.add(RecurringRuleEntity(o.getString("id"), o.getString("title"), o.getString("type"), o.getDouble("amount"), o.getString("category"), o.getString("wallet"), o.optInt("dayOfMonth", 1), o.optInt("notifyHour", 9), o.optInt("notifyMinute", 0), o.optBoolean("enabled", true), o.optString("lastConfirmedPeriod", "")))
+            }
+            if (list.isNotEmpty()) dao.insertRecurringRules(list)
         }
 
         var txCount = 0

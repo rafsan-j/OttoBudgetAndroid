@@ -13,7 +13,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.rafsan.ottobudget.R
 
-// Signature App Icon Turquoise (#6BD0C2) replaces all yellow in Dark Mode!
 val OttoTurquoise = Color(0xFF6BD0C2)
 val OttoTurquoiseDeep = Color(0xFF45B3A4)
 val OttoTurquoiseSoftDark = Color(0xFF1A3332)
@@ -27,6 +26,7 @@ val BinanceDarkTrack = Color(0xFF232934)
 val BinanceLightText = Color(0xFFEAECEF)
 val BinanceMutedText = Color(0xFF8A94A6)
 val TransferBlue = Color(0xFF3B82F6)
+val VaultEmerald = Color(0xFF10B981)
 val InkDark = Color(0xFF11141A)
 val MonochromeBoxLight = Color(0xFFECEEF2)
 val MonochromeBoxDark = Color(0xFF232934)
@@ -53,7 +53,6 @@ private val CleanLightScheme = lightColorScheme(
     outline = Color(0xFFE2E6EC)
 )
 
-// Dark Mode uses OttoTurquoise (#6BD0C2) as Primary instead of yellow!
 private val OttoDarkScheme = darkColorScheme(
     primary = OttoTurquoise,
     onPrimary = InkDark,

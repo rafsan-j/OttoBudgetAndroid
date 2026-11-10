@@ -4,6 +4,11 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
 
     <application
         android:allowBackup="true"
@@ -23,6 +28,32 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Scheduled Recurring Expense/Income Confirmation Notification Receiver -->
+        <receiver
+            android:name=".RecurringReminderReceiver"
+            android:exported="false" />
+
+        <!-- Opt-In Offline SMS Auto-Parser Receiver for bKash, Nagad, Rocket & BD Banks -->
+        <receiver
+            android:name=".SmsBroadcastReceiver"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Opt-In Offline Notification Auto-Parser Service for bKash, Nagad & Banking Apps -->
+        <service
+            android:name=".OttoNotificationListenerService"
+            android:label="OttoBudget Smart MFS &amp; Bank Alert Parser"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
 
         <receiver
             android:name=".OttoWidgetProvider"

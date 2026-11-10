@@ -14,9 +14,12 @@ import kotlinx.coroutines.launch
         WalletEntity::class,
         CategoryEntity::class,
         KeywordRuleEntity::class,
-        TransactionEntity::class
+        TransactionEntity::class,
+        VaultGoalEntity::class,
+        RecurringRuleEntity::class,
+        PendingSmsDetectionEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -31,8 +34,9 @@ abstract class AppDatabase : RoomDatabase() {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
-                    "ottobudget_v6_release.db"
+                    "ottobudget_v8_release.db"
                 )
+                    .fallbackToDestructiveMigration()
                     .addCallback(object : Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)
@@ -41,6 +45,7 @@ abstract class AppDatabase : RoomDatabase() {
                                 dao.insertWallets(SeedData.defaultWallets)
                                 dao.insertCategories(SeedData.defaultCategories)
                                 dao.insertKeywordRules(SeedData.defaultKeywordRules)
+                                dao.insertVaultGoals(SeedData.defaultVaultGoals)
                             }
                         }
                     })

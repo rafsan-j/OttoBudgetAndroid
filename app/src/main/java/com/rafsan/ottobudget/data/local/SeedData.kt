@@ -1,16 +1,37 @@
 package com.rafsan.ottobudget.data.local
 
 object SeedData {
+    // 4 Core Liquid/Card Wallets (Savings now lives in the dedicated Savings Vault!)
     val defaultWallets = listOf(
         WalletEntity("w_bkash", "bKash", "LIQUID", 0.0, "Mobile Wallet", 0xFFE11D48),
         WalletEntity("w_card", "Bank Card", "CARDS", 0.0, "Debit / Credit", 0xFF1E293B),
         WalletEntity("w_cash", "Cash", "LIQUID", 0.0, "Physical Cash", 0xFFC8F904),
-        WalletEntity("w_transit", "Transit Pass", "CARDS", 0.0, "Rapid / Metro Pass", 0xFF0284C7),
-        WalletEntity("w_savings", "Savings", "CARDS", 0.0, "Reserve Vault", 0xFF059669)
+        WalletEntity("w_transit", "Transit Pass", "CARDS", 0.0, "Rapid / Metro Pass", 0xFF0284C7)
+    )
+
+    // Default Vault Goals (Zero initial balance, ready for user assignment with Wallet Criteria!)
+    val defaultVaultGoals = listOf(
+        VaultGoalEntity(
+            id = "goal_iphone",
+            title = "New Phone / Tech Upgrade",
+            targetAmount = 60000.0,
+            allowedWallets = "Bank Card,bKash,Cash",
+            minWalletFloor = 500.0,
+            autoRuleType = "MANUAL",
+            iconName = "tech"
+        ),
+        VaultGoalEntity(
+            id = "goal_parents",
+            title = "Gift for Parents",
+            targetAmount = 5000.0,
+            allowedWallets = "bKash,Cash,Bank Card",
+            minWalletFloor = 200.0,
+            autoRuleType = "MANUAL",
+            iconName = "home"
+        )
     )
 
     val defaultCategories = listOf(
-        // Expense Categories (Monochrome vector icon identifiers)
         CategoryEntity("cat_edu", "Education", "EXPENSE", 0xFF1E2329, "book"),
         CategoryEntity("cat_food", "Food & Dining", "EXPENSE", 0xFF1E2329, "coffee"),
         CategoryEntity("cat_groceries", "Groceries", "EXPENSE", 0xFF1E2329, "bag"),
@@ -20,7 +41,6 @@ object SeedData {
         CategoryEntity("cat_health", "Health & Care", "EXPENSE", 0xFF1E2329, "health"),
         CategoryEntity("cat_housing", "Housing & Rent", "EXPENSE", 0xFF1E2329, "home"),
         CategoryEntity("cat_other", "Other", "EXPENSE", 0xFF1E2329, "ledger"),
-        // Income Categories
         CategoryEntity("cat_inc_salary", "Salary & Job", "INCOME", 0xFF0ECB81, "wallet"),
         CategoryEntity("cat_inc_freelance", "Freelance", "INCOME", 0xFF0ECB81, "tech"),
         CategoryEntity("cat_inc_tuition", "Tuition & Teaching", "INCOME", 0xFF0ECB81, "book"),
@@ -125,8 +145,6 @@ object SeedData {
             "tip", "fine", "penalty", "bank fee", "card fee", "excise duty", "tax",
             "postage", "courier", "delivery", "pathao parcel", "steadfast", "redx", "misc"
         )))
-
-        // INCOME MAGIC WORDS
         addAll(buildRules("Salary & Job", "INCOME", "Bank Card", listOf(
             "salary", "paycheck", "wage", "wages", "part-time", "part time", "job",
             "internship", "stipend", "bonus", "festival bonus", "overtime", "commission",

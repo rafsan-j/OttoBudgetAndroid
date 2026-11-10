@@ -1,24 +1,23 @@
-# OttoBudget V7 — Minimalist Offline-First Expense, Income & Wallet Tracker
+# OttoBudget V8 — Minimalist Offline-First Expense, Income, Recurring & Savings Vault Tracker
 
 **OttoBudget** is a fast, privacy-first native Android personal finance application built with **Kotlin**, **Jetpack Compose (Material 3)**, **AndroidX Biometric**, and **Room SQLite**.
 
-## Key Features in V7
-- **Winking Otto Splash & Full-Bleed Adaptive Icon**: Launches with a smooth winking animation of **Otto** and includes a full-bleed `#6BD0C2` Android Adaptive Icon that fits circular, squircle, teardrop, and square launchers identically.
-- **Persistent Dark Mode with `#6BD0C2` Turquoise Palette & Sun-to-Moon Morph**:
-  - Toggling between Light Mode and Dark Mode morphs the top-right theme button between a **Sun** icon and a **Crescent Half-Moon** icon with spring rotation physics.
-  - Dark Mode uses the signature **Otto Turquoise (`#6BD0C2`)** accent color (no yellow) and automatically persists your theme preference across app restarts.
-- **iOS-Style Lock Screen PIN & Device Biometric Security**:
-  - Protect your financial data with a 4-digit passcode featuring an iOS Lock Screen-inspired frosted circular keypad, spring-animated passcode dots, horizontal error shake feedback, and native **Fingerprint / Face Unlock** via `androidx.biometric.BiometricPrompt`.
-- **iOS Glassmorphic Floating Navigation Bar & Animated Icons**:
-  - Translucent frosted glassmorphic dock with a specular top border, sliding frosted pill indicator (no bottom dot), and interactive multi-part vector animations (`itshover.com` style) across Home, Ledger, Quick-Add, Wallets, and Profile/Settings.
-- **Fixed-Bounds 7D Spend / Income / Line Analytics**:
-  - Strictly locked card and chart container dimensions (`238dp` card / `148dp` chart viewport) so switching between `Out`, `In`, and `Line` or tapping any day of the week never shifts surrounding layout elements.
-- **Built-In FAQ & Guide**:
-  - Expandable **Settings / FAQ & Help** section answering common questions including *"What is the Monthly Cap?"*, *"How does Zero-Schema Cloud Sync work?"*, *"How do Magic Words work?"*, and *"Why does Transit Pass lock the category to Transport?"*.
-- **Zero-AI "Magic Words" Auto-Categorization**:
-  - Pre-loaded with 200+ generalized keywords across Expense and Income categories. Typing a description automatically selects the matching category in `<1ms` offline, with a dedicated **Categories & Magic Words** studio to add, edit, or delete categories and trigger words.
-- **Zero-Schema-Exposure Cloud Sync & Local Backup**:
-  - Packages and encrypts your ledger into an AES-256-GCM single-blob vault (`otto_vault/vault.enc`) inside an auto-provisioned private Supabase Storage bucket—requiring **zero SQL schema files** and never exposing internal database structure.
+## Key Features in V8
+- **Separate PIN/Biometric Savings Vault with Spendable Wallet Subtraction**:
+  - Create dedicated savings goals (e.g., *"New iPhone"*, *"Gift for Parents"*, *"Emergency Fund"*) with **per-wallet criteria** (Allowed Wallets & Minimum Spendable Wallet Floor protection).
+  - Assigning money from `Cash`, `bKash`, or `Bank Card` into a Vault goal **immediately subtracts that amount from your visible spendable wallet balance** so you never accidentally spend earmarked savings—without inflating your Monthly Expense Cap.
+  - Accessible via the **Spendable | Savings Vault** switcher on the Wallets screen or via a **stealth long-press on the Home Total Balance card**, protected by your 4-digit iOS Passcode and Device Biometrics when Vault Lock is enabled.
+- **Confirmation-Based Recurring Expenses & Income with Scheduled Notifications**:
+  - Schedule recurring bills (e.g., *House Rent*, *WiFi*) or regular income (*Part-Time Job*, *Tuition*) for any day of the month and exact notification time (`HH:MM`).
+  - Balances are **never** added or subtracted automatically—on the due date, a local notification fires and a **Pending Recurring Confirmation** banner appears on the Home screen waiting for your 1-tap confirmation.
+- **Opt-In On-Device SMS & Notification Auto-Parser (bKash, Nagad, Rocket & BD Banks)**:
+  - 100% offline regex parser (`MfsSmsNotificationParser`) detects incoming transaction SMS/notifications (extracting Amount, Fee, `TrxID`, and Wallet) and displays a 1-tap **"Log ৳250 from bKash?"** confirmation pill on the Home screen.
+- **Custom Date Picker in Quick-Add**:
+  - Log forgotten past expenses, income, or transfers for any date using 1-tap `Today`, `Yesterday`, `2 Days Ago`, or the full Calendar Date Picker dialog.
+- **Toggleable Monthly Cap**:
+  - Enable or disable the Monthly Budget Cap ceiling and progress bar anytime in Settings.
+- **Clean Matte-Frosted Navigation Dock (Zero Border Glow / Zero Horizontal Line)**:
+  - Refined floating dock with uniform matte hairline borders, transparent system navigation bar integration, and multi-part animated vector icons.
 
 ## Building from Source
 1. Clone this repository and open the root folder in **Android Studio**.
