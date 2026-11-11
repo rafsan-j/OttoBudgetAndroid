@@ -115,10 +115,16 @@ interface AppDao {
     @Query("DELETE FROM vault_goals WHERE id = :goalId")
     suspend fun deleteVaultGoalById(goalId: String)
 
+    @Query("SELECT * FROM transactions WHERE toWallet = :goalId AND (type = 'VAULT_LOCK' OR type = 'VAULT_RELEASE')")
+    suspend fun getVaultAllocationsForGoalOnce(goalId: String): List<TransactionEntity>
+
     @Query("DELETE FROM transactions WHERE toWallet = :goalId AND (type = 'VAULT_LOCK' OR type = 'VAULT_RELEASE')")
     suspend fun clearVaultAllocationsForGoal(goalId: String)
 
-    // Recurring Rules DAO
+    @Query("DELETE FROM transactions WHERE toWallet = :goalId AND wallet = :walletName AND (type = 'VAULT_LOCK' OR type = 'VAULT_RELEASE')")
+    suspend fun clearVaultAllocationsForGoalAndWallet(goalId: String, walletName: String)
+
+    // Scheduler / Recurring Rules DAO
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertRecurringRule(rule: RecurringRuleEntity)
 

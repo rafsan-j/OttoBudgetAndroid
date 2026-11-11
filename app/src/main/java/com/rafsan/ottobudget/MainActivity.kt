@@ -21,13 +21,14 @@ import androidx.biometric.BiometricPrompt
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -49,7 +50,6 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.translate
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
@@ -63,6 +63,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.fragment.app.FragmentActivity
@@ -74,6 +75,7 @@ import com.rafsan.ottobudget.data.local.*
 import com.rafsan.ottobudget.domain.RuleEngine
 import com.rafsan.ottobudget.ui.theme.*
 import com.rafsan.ottobudget.ui.viewmodel.OttoViewModel
+import com.rafsan.ottobudget.ui.viewmodel.UndoDeletedPayload
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -108,7 +110,6 @@ class MainActivity : FragmentActivity() {
                 onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
             }
 
-            // Transparent navigationBarColor + disabled contrast enforcement eliminates the unwanted horizontal system bar!
             val view = LocalView.current
             if (!view.isInEditMode) {
                 SideEffect {
@@ -119,8 +120,8 @@ class MainActivity : FragmentActivity() {
                         window.isNavigationBarContrastEnforced = false
                     }
                     val controller = WindowCompat.getInsetsController(window, view)
-                    controller.isAppearanceLightStatusBars = !darkTheme
-                    controller.isAppearanceLightNavigationBars = !darkTheme
+                    controller.isAppearanceLightStatusBars = !darkTheme && !showSplashWink
+                    controller.isAppearanceLightNavigationBars = !darkTheme && !showSplashWink
                 }
             }
 
@@ -132,7 +133,7 @@ class MainActivity : FragmentActivity() {
                         showOnboarding -> "onboarding"
                         else -> "main"
                     },
-                    animationSpec = tween(300),
+                    animationSpec = tween(280),
                     label = "rootCrossfade"
                 ) { screenState ->
                     when (screenState) {
@@ -145,7 +146,7 @@ class MainActivity : FragmentActivity() {
                             onVerifyPin = { vm.tryUnlockWithPin(it) },
                             onBiometricSuccess = { vm.onBiometricUnlockSuccess() }
                         )
-                        "onboarding" -> OttoOnboardingScreen(vm = vm, onFinish = { vm.completeOnboarding() })
+                        "onboarding" -> OttoChatOnboardingScreen(vm = vm)
                         else -> OttoBudgetRootScreen(vm = vm, activity = this@MainActivity)
                     }
                 }
@@ -222,7 +223,9 @@ fun triggerDeviceBiometricPrompt(
 }
 
 /**
- * Reusable iOS Lock Screen-Inspired PIN & Biometric Gate (Used for both App Lock and Hidden Savings Vault Lock!).
+ * iOS Lock Screen-Inspired Passcode & Biometric Gate:
+ * - Bottom-Right slot now houses the Fingerprint / Biometric icon for effortless right-thumb reach!
+ * - Bottom-Left slot houses the Backspace button.
  */
 @Composable
 fun IosStyleSecurityLockScreen(
@@ -400,42 +403,12 @@ fun IosStyleSecurityLockScreen(
                     }
                 }
 
+                // Bottom Row: Backspace (Left) | 0 (Center) | Fingerprint Biometric (Bottom-Right for easy thumb reach!)
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(24.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(72.dp)
-                            .clip(CircleShape)
-                            .background(if (biometricEnabled) Color(0xFF1A222B) else Color.Transparent)
-                            .bounceClick(enabled = biometricEnabled) {
-                                triggerDeviceBiometricPrompt(
-                                    activity = activity,
-                                    title = titleText,
-                                    subtitle = subtitleText,
-                                    onSuccess = onBiometricSuccess,
-                                    onError = { promptSubtitle = it }
-                                )
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (biometricEnabled) {
-                            PrecisionVectorIcon(
-                                name = "fingerprint",
-                                tint = OttoTurquoise,
-                                size = 26.dp,
-                                triggerKey = enteredPin.length
-                            )
-                        }
-                    }
-
-                    IosKeypadCircleButton(
-                        digit = "0",
-                        letters = "",
-                        onClick = { onDigitTapped("0") }
-                    )
-
+                    // Bottom-Left: Backspace
                     Box(
                         modifier = Modifier
                             .size(72.dp)
@@ -454,6 +427,39 @@ fun IosStyleSecurityLockScreen(
                                 size = 23.dp
                             )
                         }
+                    }
+
+                    // Bottom-Center: 0
+                    IosKeypadCircleButton(
+                        digit = "0",
+                        letters = "",
+                        onClick = { onDigitTapped("0") }
+                    )
+
+                    // Bottom-Right: Fingerprint / Biometric Icon (Always reachable by right thumb!)
+                    Box(
+                        modifier = Modifier
+                            .size(72.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF1A222B))
+                            .border(1.dp, OttoTurquoise.copy(alpha = 0.45f), CircleShape)
+                            .bounceClick {
+                                triggerDeviceBiometricPrompt(
+                                    activity = activity,
+                                    title = titleText,
+                                    subtitle = subtitleText,
+                                    onSuccess = onBiometricSuccess,
+                                    onError = { promptSubtitle = it }
+                                )
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        PrecisionVectorIcon(
+                            name = "fingerprint",
+                            tint = OttoTurquoise,
+                            size = 28.dp,
+                            triggerKey = enteredPin.length
+                        )
                     }
                 }
             }
@@ -505,27 +511,37 @@ fun IosKeypadCircleButton(
     }
 }
 
+/**
+ * Single Seamless Winking Otto Splash Screen:
+ * - Uses `R.drawable.otto_v9_transparent` (pure white octopus on 100% transparent background)
+ *   over the full-screen `#6BD0C2` turquoise canvas so there is ZERO square border around Otto!
+ * - Animates the right eye at normalized coordinates (cx = 0.6057f, cy = 0.4979f, eyeR = 0.048f) into a cute wink.
+ */
 @Composable
 fun OttoWinkingSplashScreen(onFinished: () -> Unit) {
     val winkProgress = remember { Animatable(0f) }
-    val scaleAnim = remember { Animatable(0.88f) }
+    val scaleAnim = remember { Animatable(0.86f) }
+    val floatOffset = remember { Animatable(6f) }
 
     LaunchedEffect(Unit) {
+        launch {
+            floatOffset.animateTo(0f, tween(450, easing = FastOutSlowInEasing))
+        }
         scaleAnim.animateTo(
             targetValue = 1.0f,
-            animationSpec = spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessMediumLow)
+            animationSpec = spring(dampingRatio = 0.52f, stiffness = Spring.StiffnessMediumLow)
         )
-        delay(180)
+        delay(140)
         winkProgress.animateTo(
             targetValue = 1f,
-            animationSpec = tween(durationMillis = 190, easing = FastOutSlowInEasing)
-        )
-        delay(260)
-        winkProgress.animateTo(
-            targetValue = 0f,
-            animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)
+            animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)
         )
         delay(240)
+        winkProgress.animateTo(
+            targetValue = 0f,
+            animationSpec = tween(durationMillis = 190, easing = FastOutSlowInEasing)
+        )
+        delay(220)
         onFinished()
     }
 
@@ -537,7 +553,8 @@ fun OttoWinkingSplashScreen(onFinished: () -> Unit) {
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(Spacing.MD)
+            verticalArrangement = Arrangement.spacedBy(Spacing.MD),
+            modifier = Modifier.offset(y = floatOffset.value.dp)
         ) {
             Box(
                 modifier = Modifier
@@ -546,36 +563,39 @@ fun OttoWinkingSplashScreen(onFinished: () -> Unit) {
                 contentAlignment = Alignment.Center
             ) {
                 Image(
-                    painter = painterResource(id = R.drawable.otto_v6_launcher_fullbleed),
+                    painter = painterResource(id = R.drawable.otto_v9_transparent),
                     contentDescription = "Otto Winking",
-                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(48.dp))
+                    modifier = Modifier.fillMaxSize()
                 )
+                // Right-eye wink overlay on the transparent-background white octopus
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     val p = winkProgress.value
                     if (p > 0.02f) {
-                        val cx = size.width * 0.5801f
-                        val cy = size.height * 0.4980f
-                        val eyeR = size.width * 0.027f
+                        val cx = size.width * 0.6057f
+                        val cy = size.height * 0.4979f
+                        val eyeR = size.width * 0.048f
 
+                        // 1. Cover the open circular eye hole with pure white
                         drawCircle(
                             color = Color.White,
-                            radius = eyeR * 1.35f,
+                            radius = eyeR * 1.25f,
                             center = Offset(cx, cy)
                         )
 
+                        // 2. Draw happy curved winking arc in #6BD0C2 turquoise
                         val winkPath = Path().apply {
-                            moveTo(cx - eyeR * 1.15f, cy + eyeR * 0.15f * p)
+                            moveTo(cx - eyeR * 1.05f, cy + eyeR * 0.15f * p)
                             quadraticTo(
                                 cx,
-                                cy - eyeR * 0.95f * p,
-                                cx + eyeR * 1.15f,
+                                cy - eyeR * 0.90f * p,
+                                cx + eyeR * 1.05f,
                                 cy + eyeR * 0.15f * p
                             )
                         }
                         drawPath(
                             path = winkPath,
                             color = OttoTurquoise,
-                            style = Stroke(width = (eyeR * 0.72f).coerceAtLeast(4f), cap = StrokeCap.Round)
+                            style = Stroke(width = (eyeR * 0.58f).coerceAtLeast(4f), cap = StrokeCap.Round)
                         )
                     }
                 }
@@ -612,108 +632,554 @@ fun SingleLineText(
     )
 }
 
+/**
+ * Zero-API Conversational AI-Chat Onboarding Screen (`OttoChatOnboardingScreen`):
+ * - Minimalistic animated progress bar + "Skip" button at the top.
+ * - Typing "skip" in the chat bar also skips immediately.
+ * - Animated 3-dot typing indicator (`• • •`) before each question from Otto.
+ * - Selectable quick-reply chips + custom text input bar at the bottom.
+ */
+data class ChatOnboardingQuestion(
+    val questionText: String,
+    val quickOptions: List<String>,
+    val placeholder: String
+)
+
+data class ChatBubbleMessage(
+    val id: String,
+    val isFromOtto: Boolean,
+    val text: String
+)
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun OttoOnboardingScreen(
-    vm: OttoViewModel,
-    onFinish: () -> Unit
-) {
-    var step by remember { mutableIntStateOf(0) }
-    var nameInput by remember { mutableStateOf("") }
-    var budgetInput by remember { mutableStateOf("10000") }
+fun OttoChatOnboardingScreen(vm: OttoViewModel) {
+    val questions = remember {
+        listOf(
+            ChatOnboardingQuestion(
+                questionText = "Hi there! I'm Otto, your offline financial guardian. What should I call you?",
+                quickOptions = listOf("Rafsan", "Alex", "Skip"),
+                placeholder = "Type your name or 'skip'..."
+            ),
+            ChatOnboardingQuestion(
+                questionText = "Nice to meet you! Where does your income usually come from? I'll tune your categories & magic words.",
+                quickOptions = listOf("Tuition & Part-Time", "Salary & Job", "Freelance & Gigs", "Family & Allowance", "All of these"),
+                placeholder = "Select an option or type custom..."
+            ),
+            ChatOnboardingQuestion(
+                questionText = "Which wallets do you use most day-to-day?",
+                quickOptions = listOf("bKash + Cash + Card", "bKash + Nagad + Cash", "All Wallets (incl. Transit Pass)"),
+                placeholder = "e.g. bKash, Nagad, Cash..."
+            ),
+            ChatOnboardingQuestion(
+                questionText = "Would you like a Monthly Spending Cap to pace your daily average, or prefer tracking without a cap?",
+                quickOptions = listOf("৳10,000 / month", "৳15,000 / month", "৳25,000 / month", "No Monthly Cap"),
+                placeholder = "Type a monthly cap (e.g. 12000) or 'No'..."
+            ),
+            ChatOnboardingQuestion(
+                questionText = "Last question! Are you saving up for anything special right now? I'll create a goal in your private Savings Vault.",
+                quickOptions = listOf("New Phone / Tech", "Gift for Parents", "Emergency Reserve", "Set up later"),
+                placeholder = "Type a savings goal (e.g. MacBook, Trip)..."
+            )
+        )
+    }
+
+    var currentStep by remember { mutableIntStateOf(0) }
+    var isOttoTyping by remember { mutableStateOf(true) }
+    var customInput by remember { mutableStateOf("") }
+    val messages = remember { mutableStateListOf<ChatBubbleMessage>() }
+    val answers = remember { mutableStateListOf<String>() }
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+
+    val progressTarget = ((currentStep + 1).toFloat() / questions.size.toFloat()).coerceIn(0.15f, 1f)
+    val animatedProgress by animateFloatAsState(
+        targetValue = progressTarget,
+        animationSpec = spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessLow),
+        label = "onbProgress"
+    )
+
+    // Trigger Otto typing animation whenever `currentStep` advances
+    LaunchedEffect(currentStep) {
+        if (currentStep < questions.size) {
+            isOttoTyping = true
+            delay(420)
+            isOttoTyping = false
+            messages.add(
+                ChatBubbleMessage(
+                    id = "otto_$currentStep",
+                    isFromOtto = true,
+                    text = questions[currentStep].questionText
+                )
+            )
+            delay(60)
+            if (messages.isNotEmpty()) {
+                listState.animateScrollToItem(messages.size - 1)
+            }
+        }
+    }
+
+    fun submitAnswer(rawAnswer: String) {
+        val clean = rawAnswer.trim()
+        if (clean.isEmpty()) return
+        if (clean.equals("skip", ignoreCase = true) && currentStep == 0) {
+            vm.skipChatOnboarding()
+            return
+        }
+        if (clean.equals("skip", ignoreCase = true)) {
+            vm.skipChatOnboarding()
+            return
+        }
+
+        messages.add(
+            ChatBubbleMessage(
+                id = "user_${currentStep}_${System.currentTimeMillis()}",
+                isFromOtto = false,
+                text = clean
+            )
+        )
+        answers.add(clean)
+        customInput = ""
+
+        scope.launch {
+            delay(80)
+            if (messages.isNotEmpty()) {
+                listState.animateScrollToItem(messages.size - 1)
+            }
+            if (currentStep + 1 < questions.size) {
+                currentStep += 1
+            } else {
+                isOttoTyping = true
+                delay(360)
+                isOttoTyping = false
+                messages.add(
+                    ChatBubbleMessage(
+                        id = "otto_done",
+                        isFromOtto = true,
+                        text = "All set! Launching your personalized ledger and quick interactive tour..."
+                    )
+                )
+                if (messages.isNotEmpty()) {
+                    listState.animateScrollToItem(messages.size - 1)
+                }
+                delay(550)
+                vm.completeChatOnboarding(
+                    chosenName = answers.getOrElse(0) { "User" },
+                    incomePref = answers.getOrElse(1) { "All" },
+                    walletPref = answers.getOrElse(2) { "bKash + Cash" },
+                    capAnswer = answers.getOrElse(3) { "10000" },
+                    vaultGoalAnswer = answers.getOrElse(4) { "New Phone" }
+                )
+            }
+        }
+    }
 
     Surface(
         color = MaterialTheme.colorScheme.background,
-        modifier = Modifier.fillMaxSize().systemBarsPadding()
+        modifier = Modifier
+            .fillMaxSize()
+            .systemBarsPadding()
+            .imePadding()
     ) {
         Column(
-            modifier = Modifier.fillMaxSize().padding(Spacing.XL),
-            verticalArrangement = Arrangement.SpaceBetween,
-            horizontalAlignment = Alignment.CenterHorizontally
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = Spacing.MD, vertical = Spacing.SM),
+            verticalArrangement = Arrangement.SpaceBetween
         ) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = onFinish) {
-                    SingleLineText("Skip", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-
-            if (step == 0) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(Spacing.MD)
+            // Top Header: Minimalist Progress Bar + Skip Button
+            Column(verticalArrangement = Arrangement.spacedBy(Spacing.XS)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Image(
-                        painter = painterResource(id = R.drawable.otto_v6_avatar),
-                        contentDescription = "Otto",
-                        modifier = Modifier.size(104.dp).clip(CircleShape)
-                    )
-                    SingleLineText("OttoBudget", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(
-                        text = "Your money, your\nsystem, your pace.",
-                        style = MaterialTheme.typography.displayLarge,
-                        textAlign = TextAlign.Center
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.width(22.dp).height(5.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
-                        Box(Modifier.size(5.dp).clip(CircleShape).background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(OttoTurquoise),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Image(
+                                painter = painterResource(id = R.drawable.otto_v9_transparent),
+                                contentDescription = "Otto",
+                                modifier = Modifier.size(26.dp)
+                            )
+                        }
+                        Column {
+                            SingleLineText("Otto Assistant", style = MaterialTheme.typography.titleMedium)
+                            SingleLineText(
+                                "Step ${(currentStep + 1).coerceAtMost(questions.size)} of ${questions.size} • Offline Setup",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    TextButton(onClick = { vm.skipChatOnboarding() }) {
+                        SingleLineText(
+                            text = "Skip",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
 
+                // Minimalist Progress Bar
                 Box(
                     modifier = Modifier
-                        .size(56.dp)
+                        .fillMaxWidth()
+                        .height(6.dp)
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary)
-                        .bounceClick { step = 1 },
-                    contentAlignment = Alignment.Center
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
                 ) {
-                    PrecisionVectorIcon("arrow_right", MaterialTheme.colorScheme.onPrimary, size = 22.dp, triggerKey = step)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(animatedProgress)
+                            .fillMaxHeight()
+                            .clip(CircleShape)
+                            .background(OttoTurquoise)
+                    )
                 }
-            } else {
-                Column(
-                    horizontalAlignment = Alignment.Start,
-                    verticalArrangement = Arrangement.spacedBy(Spacing.MD),
-                    modifier = Modifier.fillMaxWidth()
+            }
+
+            // Chat Messages Stream
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(vertical = Spacing.SM),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                items(messages, key = { it.id }) { msg ->
+                    val bubbleScale = remember { Animatable(0.90f) }
+                    LaunchedEffect(msg.id) {
+                        bubbleScale.animateTo(1f, spring(dampingRatio = 0.58f, stiffness = Spring.StiffnessMediumLow))
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .scale(bubbleScale.value),
+                        horizontalArrangement = if (msg.isFromOtto) Arrangement.Start else Arrangement.End,
+                        verticalAlignment = Alignment.Bottom
+                    ) {
+                        if (msg.isFromOtto) {
+                            Box(
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .clip(CircleShape)
+                                    .background(OttoTurquoise),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Image(
+                                    painter = painterResource(id = R.drawable.otto_v9_transparent),
+                                    contentDescription = "Otto",
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(
+                                topStart = 18.dp,
+                                topEnd = 18.dp,
+                                bottomStart = if (msg.isFromOtto) 4.dp else 18.dp,
+                                bottomEnd = if (msg.isFromOtto) 18.dp else 4.dp
+                            ),
+                            color = if (msg.isFromOtto) MaterialTheme.colorScheme.surface else OttoTurquoise,
+                            border = if (msg.isFromOtto) BorderStroke(1.dp, MaterialTheme.colorScheme.outline) else null,
+                            modifier = Modifier.widthIn(max = 290.dp)
+                        ) {
+                            Text(
+                                text = msg.text,
+                                style = MaterialTheme.typography.titleMedium.copy(lineHeight = 20.sp),
+                                color = if (msg.isFromOtto) MaterialTheme.colorScheme.onSurface else InkDark,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Animated 3-dot typing indicator when Otto is preparing the next question
+                if (isOttoTyping) {
+                    item(key = "typing_indicator") {
+                        val inf = rememberInfiniteTransition(label = "typingDots")
+                        val dot1 by inf.animateFloat(0.3f, 1f, infiniteRepeatable(tween(420), RepeatMode.Reverse), label = "d1")
+                        val dot2 by inf.animateFloat(0.3f, 1f, infiniteRepeatable(tween(420, delayMillis = 140), RepeatMode.Reverse), label = "d2")
+                        val dot3 by inf.animateFloat(0.3f, 1f, infiniteRepeatable(tween(420, delayMillis = 280), RepeatMode.Reverse), label = "d3")
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .clip(CircleShape)
+                                    .background(OttoTurquoise),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Image(
+                                    painter = painterResource(id = R.drawable.otto_v9_transparent),
+                                    contentDescription = "Otto",
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(16.dp),
+                                color = MaterialTheme.colorScheme.surface,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Box(Modifier.size(7.dp).alpha(dot1).clip(CircleShape).background(OttoTurquoise))
+                                    Box(Modifier.size(7.dp).alpha(dot2).clip(CircleShape).background(OttoTurquoise))
+                                    Box(Modifier.size(7.dp).alpha(dot3).clip(CircleShape).background(OttoTurquoise))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Bottom Quick-Reply Chips + Custom Chat Input Field
+            Column(verticalArrangement = Arrangement.spacedBy(Spacing.XS)) {
+                if (!isOttoTyping && currentStep < questions.size) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        questions[currentStep].quickOptions.forEach { option ->
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                border = BorderStroke(1.dp, OttoTurquoise.copy(alpha = 0.45f)),
+                                modifier = Modifier.bounceClick { submitAnswer(option) }
+                            ) {
+                                SingleLineText(
+                                    text = option,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.XS),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Set up your\npersonal ledger.", style = MaterialTheme.typography.displayLarge)
-                    SingleLineText(
-                        "Offline-first SQLite with Savings Vault & Smart Rules",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                     OutlinedTextField(
-                        value = nameInput,
-                        onValueChange = { nameInput = it },
-                        label = { SingleLineText("Your Name (optional)") },
+                        value = customInput,
+                        onValueChange = { customInput = it },
+                        placeholder = {
+                            SingleLineText(
+                                text = questions.getOrNull(currentStep)?.placeholder ?: "Type your answer...",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        },
                         singleLine = true,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.fillMaxWidth()
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        shape = RoundedCornerShape(18.dp),
+                        modifier = Modifier.weight(1f)
                     )
-                    OutlinedTextField(
-                        value = budgetInput,
-                        onValueChange = { budgetInput = it },
-                        label = { SingleLineText("Monthly Budget Cap (৳)") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Decimal,
-                            imeAction = ImeAction.Done
-                        ),
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.fillMaxWidth()
+
+                    Box(
+                        modifier = Modifier
+                            .size(50.dp)
+                            .clip(CircleShape)
+                            .background(OttoTurquoise)
+                            .bounceClick { submitAnswer(customInput) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        PrecisionVectorIcon("arrow_right", InkDark, size = 20.dp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Animated Interactive Spotlight Tour Overlay (`OttoInteractiveTourOverlay`):
+ * Guides the user across the 4 key areas of OttoBudget V9 with animated pulsing rings & switching tabs.
+ */
+data class SpotlightStepInfo(
+    val tabToActivate: String,
+    val title: String,
+    val description: String,
+    val badgeLabel: String
+)
+
+@Composable
+fun OttoInteractiveTourOverlay(
+    currentStep: Int,
+    onStepChange: (Int, String) -> Unit,
+    onFinishTour: () -> Unit
+) {
+    val steps = remember {
+        listOf(
+            SpotlightStepInfo(
+                tabToActivate = "home",
+                title = "1. Clean Home & Smart Alert FAB",
+                description = "Your Home screen shows your net available balance and a fixed-size 7D Expense, Income & Trend chart. Whenever a new bKash/Nagad SMS alert or scheduled bill arrives, a floating notification button pops up at the bottom-right!",
+                badgeLabel = "HOME & ALERTS"
+            ),
+            SpotlightStepInfo(
+                tabToActivate = "home",
+                title = "2. Quick-Add & Magic Word Auto-Scroll",
+                description = "Tap the center '+' button to log an Expense, Income, or Transfer. Type words like 'cng' or 'coffee' and watch the Category bar automatically scroll to the right category! Tap the Date bar to log forgotten past dates.",
+                badgeLabel = "QUICK-ADD (+)"
+            ),
+            SpotlightStepInfo(
+                tabToActivate = "wallets",
+                title = "3. Available vs. Total & Floating Vault",
+                description = "On the Wallets screen, switch between 'Available' (net spendable balance) and 'Total' (actual balance). Tap the floating 'Vault' button at the bottom-right to open your PIN/Biometric Savings Vault!",
+                badgeLabel = "WALLETS & VAULT"
+            ),
+            SpotlightStepInfo(
+                tabToActivate = "ledger",
+                title = "4. Press & Hold to Edit + Undo Delete",
+                description = "Press and hold any transaction in Recent Transactions or Ledger to edit its amount, date, wallet, or category. Deleting any item asks for confirmation and includes a 1-tap Undo snackbar!",
+                badgeLabel = "LEDGER & EDITING"
+            )
+        )
+    }
+
+    val stepInfo = steps.getOrElse(currentStep) { steps.first() }
+    val pulseTrans = rememberInfiniteTransition(label = "tourPulse")
+    val ringScale by pulseTrans.animateFloat(
+        initialValue = 0.94f,
+        targetValue = 1.08f,
+        animationSpec = infiniteRepeatable(tween(750, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "ringScale"
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.62f))
+            .clickable(enabled = true, onClick = {})
+            .padding(Spacing.LG),
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(
+            shape = RoundedCornerShape(26.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.5.dp, OttoTurquoise),
+            modifier = Modifier
+                .fillMaxWidth()
+                .scale(ringScale.coerceIn(0.98f, 1.02f))
+        ) {
+            Column(
+                modifier = Modifier.padding(Spacing.LG),
+                verticalArrangement = Arrangement.spacedBy(Spacing.MD)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = OttoTurquoise.copy(alpha = 0.18f)
+                    ) {
+                        SingleLineText(
+                            text = stepInfo.badgeLabel,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = OttoTurquoiseDeep,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+                        )
+                    }
+
+                    TextButton(onClick = onFinishTour) {
+                        SingleLineText("Skip Tour", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.SM)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .scale(ringScale)
+                            .clip(CircleShape)
+                            .background(OttoTurquoise),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Image(
+                            painter = painterResource(id = R.drawable.otto_v9_transparent),
+                            contentDescription = "Otto",
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
+                    Text(
+                        text = stepInfo.title,
+                        style = MaterialTheme.typography.headlineLarge,
+                        modifier = Modifier.weight(1f)
                     )
                 }
 
-                Button(
-                    onClick = {
-                        vm.updateProfile(
-                            newName = nameInput.ifBlank { "User" },
-                            newBudget = budgetInput.toDoubleOrNull() ?: 10000.0
-                        )
-                        onFinish()
-                    },
-                    modifier = Modifier.fillMaxWidth().height(52.dp),
-                    shape = RoundedCornerShape(16.dp)
+                Text(
+                    text = stepInfo.description,
+                    style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 20.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                // Step Dots + Next / Done Button
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    SingleLineText("Start Using OttoBudget", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onPrimary)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        steps.indices.forEach { idx ->
+                            Box(
+                                modifier = Modifier
+                                    .width(if (idx == currentStep) 22.dp else 7.dp)
+                                    .height(7.dp)
+                                    .clip(CircleShape)
+                                    .background(if (idx == currentStep) OttoTurquoise else MaterialTheme.colorScheme.surfaceVariant)
+                            )
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            if (currentStep + 1 < steps.size) {
+                                val nextIdx = currentStep + 1
+                                onStepChange(nextIdx, steps[nextIdx].tabToActivate)
+                            } else {
+                                onFinishTour()
+                            }
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = OttoTurquoise, contentColor = InkDark)
+                    ) {
+                        SingleLineText(
+                            text = if (currentStep + 1 < steps.size) "Next" else "Done",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = InkDark
+                        )
+                    }
                 }
             }
         }
@@ -740,15 +1206,18 @@ fun OttoBudgetRootScreen(
     val monthlyCapEnabled by vm.isMonthlyCapEnabled.collectAsState()
     val recurringEnabled by vm.isRecurringEnabled.collectAsState()
     val statusMsg by vm.statusMessage.collectAsState()
+    val pendingUndo by vm.pendingUndoEvent.collectAsState()
     val isPinEnabled by vm.isPinLockEnabled.collectAsState()
     val isVaultLockEnabled by vm.isVaultLockEnabled.collectAsState()
-    val isVaultStealthMode by vm.isVaultStealthMode.collectAsState()
     val isVaultUnlocked by vm.isVaultSessionUnlocked.collectAsState()
+    val showSpotlightTour by vm.showSpotlightTour.collectAsState()
 
     var currentTab by remember { mutableStateOf("home") }
-    var walletsSubMode by remember { mutableStateOf("spendable") } // "spendable" or "vault"
+    var tourStep by remember { mutableIntStateOf(0) }
+    var walletsSubMode by remember { mutableStateOf("wallets") } // "wallets" or "vault"
+    var walletBalancePillMode by remember { mutableStateOf("AVAILABLE") } // "AVAILABLE" or "TOTAL"
     var showVaultPinGate by remember { mutableStateOf(false) }
-    var settingsSubScreen by remember { mutableStateOf("menu") } // "menu", "backup", "magic_words", "profile", "security", "recurring", "sms_parser", "faq"
+    var settingsSubScreen by remember { mutableStateOf("menu") } // "menu", "backup", "magic_words", "profile", "security", "scheduler", "sms_parser", "faq"
     var navAnimTrigger by remember { mutableIntStateOf(0) }
     var avatarWinkTrigger by remember { mutableIntStateOf(0) }
     var showAddSheet by remember { mutableStateOf(false) }
@@ -757,7 +1226,21 @@ fun OttoBudgetRootScreen(
     var sheetPreselectedTo by remember { mutableStateOf("Cash") }
     var walletToEditBalance by remember { mutableStateOf<WalletEntity?>(null) }
 
+    // Global Delete Confirmation Dialog State + Edit Transaction Dialog State
+    var deleteConfirmTitle by remember { mutableStateOf<String?>(null) }
+    var deleteConfirmMessage by remember { mutableStateOf("") }
+    var pendingDeleteConfirmAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var transactionToEdit by remember { mutableStateOf<TransactionEntity?>(null) }
+
+    fun askDeleteConfirmation(title: String, message: String, onConfirmDelete: () -> Unit) {
+        deleteConfirmTitle = title
+        deleteConfirmMessage = message
+        pendingDeleteConfirmAction = onConfirmDelete
+    }
+
     val snackbarHostState = remember { SnackbarHostState() }
+
+    // Status message snackbar
     LaunchedEffect(statusMsg) {
         statusMsg?.let {
             snackbarHostState.showSnackbar(it, duration = SnackbarDuration.Short)
@@ -765,18 +1248,33 @@ fun OttoBudgetRootScreen(
         }
     }
 
-    // Spendable Wallet Balances (VAULT_LOCK amounts are automatically subtracted!)
-    val balances = remember(wallets, transactions) {
-        vm.computeWalletBalances(wallets, transactions)
+    // Undo Delete Snackbar (Pops up with an "Undo" button whenever any item is deleted!)
+    LaunchedEffect(pendingUndo) {
+        pendingUndo?.let { payload ->
+            val result = snackbarHostState.showSnackbar(
+                message = "Deleted ${payload.label}",
+                actionLabel = "Undo",
+                duration = SnackbarDuration.Short
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                vm.executeUndo(payload)
+            } else {
+                vm.clearUndoEvent()
+            }
+        }
     }
-    val totalAvailable = balances.values.sum()
 
-    // Per-Goal Savings Vault Holdings Map: goalId -> (walletName -> savedAmount)
+    // Available (Spendable) Balances vs. Total (Actual) Balances
+    val availableBalances = remember(wallets, transactions) {
+        vm.computeAvailableWalletBalances(wallets, transactions)
+    }
+    val totalActualBalances = remember(wallets, transactions) {
+        vm.computeTotalActualWalletBalances(wallets, transactions)
+    }
+    val totalAvailableSum = availableBalances.values.sum()
+
     val vaultHoldings = remember(transactions) {
         vm.computeVaultGoalHoldings(transactions)
-    }
-    val totalVaultSaved = remember(vaultHoldings) {
-        vaultHoldings.values.sumOf { it.values.sum() }
     }
 
     val addSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -795,7 +1293,6 @@ fun OttoBudgetRootScreen(
         }
     }
 
-    // Helper to open the Savings Vault (challenges with PIN/Biometrics if Vault Lock is enabled!)
     fun requestOpenSavingsVault() {
         if (isVaultLockEnabled && !isVaultUnlocked) {
             showVaultPinGate = true
@@ -809,7 +1306,7 @@ fun OttoBudgetRootScreen(
     if (showVaultPinGate) {
         IosStyleSecurityLockScreen(
             titleText = "Savings Vault Locked",
-            subtitleText = if (vm.isPinLockEnabled.collectAsState().value) "Enter your 4-digit passcode or use biometrics" else "Set a 4-digit PIN in Settings → Security (Default: any 4 digits)",
+            subtitleText = if (isPinEnabled) "Enter your 4-digit passcode or use biometrics" else "Enter any 4 digits or set PIN in Settings → Security",
             biometricEnabled = vm.isBiometricEnabled.collectAsState().value,
             activity = activity,
             onVerifyPin = { entered ->
@@ -833,234 +1330,329 @@ fun OttoBudgetRootScreen(
         return
     }
 
-    Scaffold(
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        topBar = {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.background)
-                    .statusBarsPadding()
-                    .padding(horizontal = Spacing.MD, vertical = Spacing.SM),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+            topBar = {
                 Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.background)
+                        .statusBarsPadding()
+                        .padding(horizontal = Spacing.MD, vertical = Spacing.SM),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(Spacing.SM),
-                    modifier = Modifier.weight(1f)
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Image(
-                        painter = painterResource(id = R.drawable.otto_v6_avatar),
-                        contentDescription = "Otto",
-                        modifier = Modifier
-                            .size(42.dp)
-                            .scale(avatarScale.value)
-                            .clip(CircleShape)
-                            .border(1.5.dp, OttoTurquoise.copy(alpha = 0.65f), CircleShape)
-                            .bounceClick {
-                                avatarWinkTrigger++
-                                currentTab = "profile"
-                                settingsSubScreen = "menu"
-                                navAnimTrigger++
-                            }
-                    )
-                    Column(modifier = Modifier.weight(1f)) {
-                        SingleLineText(
-                            text = userName,
-                            style = MaterialTheme.typography.titleLarge
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.SM),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Image(
+                            painter = painterResource(id = R.drawable.otto_v6_avatar),
+                            contentDescription = "Otto",
+                            modifier = Modifier
+                                .size(42.dp)
+                                .scale(avatarScale.value)
+                                .clip(CircleShape)
+                                .border(1.5.dp, OttoTurquoise, CircleShape)
+                                .bounceClick {
+                                    avatarWinkTrigger++
+                                    currentTab = "profile"
+                                    settingsSubScreen = "menu"
+                                    navAnimTrigger++
+                                }
                         )
-                        SingleLineText(
-                            text = "OttoBudget",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            SingleLineText(
+                                text = userName,
+                                style = MaterialTheme.typography.titleLarge
+                            )
+                            SingleLineText(
+                                text = "OttoBudget",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
-                }
 
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (isPinEnabled) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (isPinEnabled) {
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.surface,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .bounceClick { vm.lockAppNow() }
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    PrecisionVectorIcon(
+                                        name = "lock",
+                                        tint = if (darkTheme) OttoTurquoise else OttoTurquoiseDeep,
+                                        size = 18.dp,
+                                        triggerKey = navAnimTrigger
+                                    )
+                                }
+                            }
+                        }
+
                         Surface(
                             shape = CircleShape,
-                            color = MaterialTheme.colorScheme.surface,
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                            color = if (darkTheme) Color(0xFF1A2426) else OttoTurquoiseSoftLight,
+                            border = BorderStroke(
+                                width = 1.dp,
+                                color = OttoTurquoise.copy(alpha = 0.55f)
+                            ),
                             modifier = Modifier
                                 .size(40.dp)
-                                .bounceClick { vm.lockAppNow() }
+                                .bounceClick {
+                                    navAnimTrigger++
+                                    vm.toggleDarkTheme()
+                                }
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier.graphicsLayer { rotationZ = themeIconRotation * 0.2f }
+                            ) {
                                 PrecisionVectorIcon(
-                                    name = "lock",
-                                    tint = if (darkTheme) OttoTurquoise else MaterialTheme.colorScheme.onSurface,
-                                    size = 17.dp,
-                                    triggerKey = navAnimTrigger
+                                    name = if (darkTheme) "half_moon" else "sun",
+                                    tint = if (darkTheme) OttoTurquoise else OttoTurquoiseDeep,
+                                    size = 19.dp,
+                                    triggerKey = darkTheme
                                 )
                             }
                         }
                     }
-
-                    Surface(
-                        shape = CircleShape,
-                        color = if (darkTheme) Color(0xFF1A2426) else MaterialTheme.colorScheme.surface,
-                        border = BorderStroke(
-                            width = 1.dp,
-                            color = if (darkTheme) Color(0xFF2B3B3E) else MaterialTheme.colorScheme.outline
-                        ),
-                        modifier = Modifier
-                            .size(40.dp)
-                            .bounceClick {
-                                navAnimTrigger++
-                                vm.toggleDarkTheme()
+                }
+            },
+            bottomBar = {
+                // Redesigned Concentric Equal-Spaced Bottom Nav Bar with 24.dp Icons & Circular Pill Indicator!
+                CleanConcentricBottomNav(
+                    currentTab = currentTab,
+                    darkTheme = darkTheme,
+                    navAnimTrigger = navAnimTrigger,
+                    onSelectTab = { tab ->
+                        if (tab != "wallets") {
+                            walletsSubMode = "wallets"
+                        }
+                        currentTab = tab
+                        if (tab == "profile") settingsSubScreen = "menu"
+                        navAnimTrigger++
+                    },
+                    onQuickAdd = {
+                        navAnimTrigger++
+                        sheetDefaultMode = "EXPENSE"
+                        if (wallets.isNotEmpty()) {
+                            sheetPreselectedFrom = wallets.first().name
+                            sheetPreselectedTo = wallets.getOrNull(1)?.name ?: wallets.first().name
+                        }
+                        showAddSheet = true
+                    }
+                )
+            }
+        ) { innerPadding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .padding(horizontal = Spacing.MD)
+            ) {
+                AnimatedContent(
+                    targetState = currentTab,
+                    transitionSpec = {
+                        (fadeIn(animationSpec = tween(220)) + scaleIn(initialScale = 0.98f, animationSpec = tween(220)))
+                            .togetherWith(fadeOut(animationSpec = tween(160)))
+                    },
+                    label = "tabTransition"
+                ) { tab ->
+                    when (tab) {
+                        "home" -> DashboardV9Screen(
+                            totalAvailable = totalAvailableSum,
+                            monthlyBudget = monthlyBudget,
+                            monthlyCapEnabled = monthlyCapEnabled,
+                            recurringEnabled = recurringEnabled,
+                            recurringRules = recurringRules,
+                            pendingSmsDetections = pendingSmsDetections,
+                            balances = availableBalances,
+                            transactions = transactions,
+                            categories = categories,
+                            excludeMajor = excludeMajor,
+                            darkTheme = darkTheme,
+                            vm = vm,
+                            onToggleMajor = { vm.excludeMajorGlobal.value = !excludeMajor },
+                            onSeeAllLedger = { currentTab = "ledger"; navAnimTrigger++ },
+                            onRequestEditTx = { transactionToEdit = it },
+                            onRequestDeleteTx = { tx ->
+                                askDeleteConfirmation(
+                                    title = "Delete Transaction?",
+                                    message = "Delete '${tx.description.ifBlank { tx.category }}' (৳${tx.amount.roundToInt()})?",
+                                    onConfirmDelete = { vm.deleteTransactionWithUndo(tx) }
+                                )
                             }
-                    ) {
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier.graphicsLayer { rotationZ = themeIconRotation * 0.2f }
+                        )
+                        "ledger" -> LedgerV9Screen(
+                            transactions = transactions.filter { it.type != "VAULT_LOCK" && it.type != "VAULT_RELEASE" },
+                            categories = categories,
+                            darkTheme = darkTheme,
+                            onRequestEditTx = { transactionToEdit = it },
+                            onRequestDeleteTx = { tx ->
+                                askDeleteConfirmation(
+                                    title = "Delete Transaction?",
+                                    message = "Delete '${tx.description.ifBlank { tx.category }}' (৳${tx.amount.roundToInt()})?",
+                                    onConfirmDelete = { vm.deleteTransactionWithUndo(tx) }
+                                )
+                            }
+                        )
+                        "wallets" -> WalletsAndVaultV9Screen(
+                            subMode = walletsSubMode,
+                            balancePillMode = walletBalancePillMode,
+                            onChangeBalancePillMode = { walletBalancePillMode = it },
+                            onOpenVault = { requestOpenSavingsVault() },
+                            onBackToWallets = { walletsSubMode = "wallets" },
+                            darkTheme = darkTheme,
+                            wallets = wallets,
+                            availableBalances = availableBalances,
+                            totalActualBalances = totalActualBalances,
+                            vaultGoals = vaultGoals,
+                            vaultHoldings = vaultHoldings,
+                            vm = vm,
+                            onMoveFromWallet = { fromW ->
+                                sheetDefaultMode = "TRANSFER"
+                                sheetPreselectedFrom = fromW
+                                sheetPreselectedTo = wallets.firstOrNull { it.name != fromW }?.name ?: "Cash"
+                                showAddSheet = true
+                            },
+                            onEditWalletBalance = { w -> walletToEditBalance = w },
+                            onRequestDeleteGoal = { goal ->
+                                askDeleteConfirmation(
+                                    title = "Delete Vault Goal?",
+                                    message = "Delete '${goal.title}'? Any assigned funds will be returned to your available wallet balances.",
+                                    onConfirmDelete = { vm.deleteVaultGoalWithUndo(goal) }
+                                )
+                            }
+                        )
+                        "profile" -> SettingsHubV9Screen(
+                            subScreen = settingsSubScreen,
+                            onNavigateSubScreen = { settingsSubScreen = it },
+                            vm = vm,
+                            activity = activity,
+                            balances = availableBalances,
+                            onEditWalletBalance = { w -> walletToEditBalance = w },
+                            onAskDeleteConfirmation = { title, msg, act -> askDeleteConfirmation(title, msg, act) }
+                        )
+                    }
+                }
+            }
+
+            if (showAddSheet) {
+                ModalBottomSheet(
+                    onDismissRequest = { showAddSheet = false },
+                    sheetState = addSheetState,
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier.statusBarsPadding()
+                ) {
+                    QuickAddV9BottomSheet(
+                        defaultMode = sheetDefaultMode,
+                        initialFromWallet = sheetPreselectedFrom,
+                        initialToWallet = sheetPreselectedTo,
+                        balances = availableBalances,
+                        darkTheme = darkTheme,
+                        vm = vm,
+                        onDismiss = { showAddSheet = false }
+                    )
+                }
+            }
+
+            walletToEditBalance?.let { targetWallet ->
+                val currentLive = availableBalances[targetWallet.name] ?: 0.0
+                EditWalletBalanceDialog(
+                    wallet = targetWallet,
+                    currentBalance = currentLive,
+                    onDismiss = { walletToEditBalance = null },
+                    onConfirm = { newBalance, newColorHex ->
+                        vm.setExactWalletBalanceAndColor(targetWallet, newBalance, currentLive, newColorHex)
+                        walletToEditBalance = null
+                    }
+                )
+            }
+
+            // Long-Press Edit Past Transaction Dialog
+            transactionToEdit?.let { targetTx ->
+                EditTransactionDialog(
+                    tx = targetTx,
+                    wallets = wallets,
+                    categories = categories,
+                    darkTheme = darkTheme,
+                    onDismiss = { transactionToEdit = null },
+                    onSave = { newType, newAmt, newDesc, newCat, newW, newToW, newDate ->
+                        vm.updateExistingTransaction(targetTx, newType, newAmt, newDesc, newCat, newW, newToW, newDate)
+                        transactionToEdit = null
+                    },
+                    onDelete = {
+                        val toDel = targetTx
+                        transactionToEdit = null
+                        askDeleteConfirmation(
+                            title = "Delete Transaction?",
+                            message = "Delete '${toDel.description.ifBlank { toDel.category }}' (৳${toDel.amount.roundToInt()})?",
+                            onConfirmDelete = { vm.deleteTransactionWithUndo(toDel) }
+                        )
+                    }
+                )
+            }
+
+            // Global Delete Confirmation Popup Dialog
+            if (deleteConfirmTitle != null) {
+                AlertDialog(
+                    onDismissRequest = {
+                        deleteConfirmTitle = null
+                        pendingDeleteConfirmAction = null
+                    },
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    title = { SingleLineText(deleteConfirmTitle ?: "Confirm Delete", style = MaterialTheme.typography.titleLarge) },
+                    text = { Text(deleteConfirmMessage, style = MaterialTheme.typography.bodyMedium) },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                pendingDeleteConfirmAction?.invoke()
+                                deleteConfirmTitle = null
+                                pendingDeleteConfirmAction = null
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = BinanceRed),
+                            shape = RoundedCornerShape(12.dp)
                         ) {
-                            PrecisionVectorIcon(
-                                name = if (darkTheme) "half_moon" else "sun",
-                                tint = if (darkTheme) OttoTurquoise else MaterialTheme.colorScheme.onSurface,
-                                size = 19.dp,
-                                triggerKey = darkTheme
-                            )
+                            SingleLineText("Delete", color = Color.White)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(
+                            onClick = {
+                                deleteConfirmTitle = null
+                                pendingDeleteConfirmAction = null
+                            }
+                        ) {
+                            SingleLineText("Cancel")
                         }
                     }
-                }
-            }
-        },
-        bottomBar = {
-            // Fixed Clean Matte-Frosted Floating Nav Bar (Zero horizontal line artifact, Zero glowing border!)
-            CleanMatteGlassBottomNav(
-                currentTab = currentTab,
-                darkTheme = darkTheme,
-                navAnimTrigger = navAnimTrigger,
-                onSelectTab = { tab ->
-                    if (tab != "wallets") {
-                        walletsSubMode = "spendable"
-                    }
-                    currentTab = tab
-                    if (tab == "profile") settingsSubScreen = "menu"
-                    navAnimTrigger++
-                },
-                onQuickAdd = {
-                    navAnimTrigger++
-                    sheetDefaultMode = "EXPENSE"
-                    if (wallets.isNotEmpty()) {
-                        sheetPreselectedFrom = wallets.first().name
-                        sheetPreselectedTo = wallets.getOrNull(1)?.name ?: wallets.first().name
-                    }
-                    showAddSheet = true
-                }
-            )
-        }
-    ) { innerPadding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .padding(horizontal = Spacing.MD)
-        ) {
-            AnimatedContent(
-                targetState = currentTab,
-                transitionSpec = {
-                    (fadeIn(animationSpec = tween(220)) + scaleIn(initialScale = 0.98f, animationSpec = tween(220)))
-                        .togetherWith(fadeOut(animationSpec = tween(160)))
-                },
-                label = "tabTransition"
-            ) { tab ->
-                when (tab) {
-                    "home" -> DashboardV8Screen(
-                        totalAvailable = totalAvailable,
-                        totalVaultSaved = totalVaultSaved,
-                        monthlyBudget = monthlyBudget,
-                        monthlyCapEnabled = monthlyCapEnabled,
-                        recurringEnabled = recurringEnabled,
-                        recurringRules = recurringRules,
-                        pendingSmsDetections = pendingSmsDetections,
-                        balances = balances,
-                        transactions = transactions,
-                        categories = categories,
-                        excludeMajor = excludeMajor,
-                        darkTheme = darkTheme,
-                        isVaultStealthMode = isVaultStealthMode,
-                        vm = vm,
-                        onToggleMajor = { vm.excludeMajorGlobal.value = !excludeMajor },
-                        onOpenSavingsVault = { requestOpenSavingsVault() },
-                        onSeeAllLedger = { currentTab = "ledger"; navAnimTrigger++ },
-                        onDeleteTx = { vm.deleteTransaction(it) }
-                    )
-                    "ledger" -> LedgerV8Screen(
-                        transactions = transactions.filter { it.type != "VAULT_LOCK" && it.type != "VAULT_RELEASE" },
-                        categories = categories,
-                        darkTheme = darkTheme,
-                        onDeleteTx = { vm.deleteTransaction(it) }
-                    )
-                    "wallets" -> WalletsAndVaultV8Screen(
-                        subMode = walletsSubMode,
-                        onSwitchSubMode = { mode ->
-                            if (mode == "vault") {
-                                requestOpenSavingsVault()
-                            } else {
-                                walletsSubMode = "spendable"
-                            }
-                        },
-                        isVaultStealthMode = isVaultStealthMode,
-                        darkTheme = darkTheme,
-                        wallets = wallets,
-                        balances = balances,
-                        vaultGoals = vaultGoals,
-                        vaultHoldings = vaultHoldings,
-                        vm = vm,
-                        onMoveFromWallet = { fromW ->
-                            sheetDefaultMode = "TRANSFER"
-                            sheetPreselectedFrom = fromW
-                            sheetPreselectedTo = wallets.firstOrNull { it.name != fromW }?.name ?: "Cash"
-                            showAddSheet = true
-                        },
-                        onEditWalletBalance = { w -> walletToEditBalance = w }
-                    )
-                    "profile" -> SettingsHubV8Screen(
-                        subScreen = settingsSubScreen,
-                        onNavigateSubScreen = { settingsSubScreen = it },
-                        vm = vm,
-                        activity = activity,
-                        balances = balances,
-                        onEditWalletBalance = { w -> walletToEditBalance = w }
-                    )
-                }
-            }
-        }
-
-        if (showAddSheet) {
-            ModalBottomSheet(
-                onDismissRequest = { showAddSheet = false },
-                sheetState = addSheetState,
-                containerColor = MaterialTheme.colorScheme.surface
-            ) {
-                QuickAddV8BottomSheet(
-                    defaultMode = sheetDefaultMode,
-                    initialFromWallet = sheetPreselectedFrom,
-                    initialToWallet = sheetPreselectedTo,
-                    balances = balances,
-                    darkTheme = darkTheme,
-                    vm = vm,
-                    onDismiss = { showAddSheet = false }
                 )
             }
         }
 
-        walletToEditBalance?.let { targetWallet ->
-            val currentLive = balances[targetWallet.name] ?: 0.0
-            EditWalletBalanceDialog(
-                wallet = targetWallet,
-                currentBalance = currentLive,
-                onDismiss = { walletToEditBalance = null },
-                onConfirm = { newBalance, newColorHex ->
-                    vm.setExactWalletBalanceAndColor(targetWallet, newBalance, currentLive, newColorHex)
-                    walletToEditBalance = null
+        // Animated Interactive Spotlight Tour Overlay
+        if (showSpotlightTour) {
+            OttoInteractiveTourOverlay(
+                currentStep = tourStep,
+                onStepChange = { nextIdx, targetTab ->
+                    tourStep = nextIdx
+                    currentTab = targetTab
+                },
+                onFinishTour = {
+                    tourStep = 0
+                    currentTab = "home"
+                    vm.finishSpotlightTour()
                 }
             )
         }
@@ -1068,12 +1660,13 @@ fun OttoBudgetRootScreen(
 }
 
 /**
- * Clean Matte-Frosted Floating Bottom Navigation Dock:
- * - Completely removes the top horizontal straight line artifact and removes any glowing border in Dark Mode!
- * - Uses a uniform 1.dp matte hairline border (`#222731` in Dark Mode, `#E4E8F0` in Light Mode) and clean solid matte active pills.
+ * Redesigned Concentric Floating Bottom Navigation Bar:
+ * - Equal `Modifier.weight(1f)` 5-slot distribution so spacing is mathematically 100% even!
+ * - Larger `24.dp` vector icons.
+ * - Concentric `CircleShape` (`46.dp`) active indicator pill inside a `CircleShape` (`height = 64.dp`) dock—eliminating the rectangular indicator look!
  */
 @Composable
-fun CleanMatteGlassBottomNav(
+fun CleanConcentricBottomNav(
     currentTab: String,
     darkTheme: Boolean,
     navAnimTrigger: Int,
@@ -1083,12 +1676,12 @@ fun CleanMatteGlassBottomNav(
     val dockSurfaceColor = if (darkTheme) {
         Color(0xFF151921).copy(alpha = 0.96f)
     } else {
-        Color(0xFFFFFFFF).copy(alpha = 0.96f)
+        Color(0xFFFFFFFF).copy(alpha = 0.97f)
     }
     val dockBorderColor = if (darkTheme) {
         Color(0xFF232934)
     } else {
-        Color(0xFFE3E7EF)
+        Color(0xFFD9EBE7)
     }
 
     Box(
@@ -1101,82 +1694,97 @@ fun CleanMatteGlassBottomNav(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(64.dp)
-                .clip(RoundedCornerShape(28.dp))
+                .clip(CircleShape)
                 .background(dockSurfaceColor)
-                .border(1.dp, dockBorderColor, RoundedCornerShape(28.dp))
-                .padding(horizontal = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceEvenly
+                .border(1.dp, dockBorderColor, CircleShape)
+                .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            MatteNavTabItem(
-                iconName = "home",
-                selected = currentTab == "home",
-                darkTheme = darkTheme,
-                triggerKey = navAnimTrigger,
-                onClick = { onSelectTab("home") }
-            )
-            MatteNavTabItem(
-                iconName = "ledger",
-                selected = currentTab == "ledger",
-                darkTheme = darkTheme,
-                triggerKey = navAnimTrigger,
-                onClick = { onSelectTab("ledger") }
-            )
-
-            // Center Quick-Add Button (Matte solid fill, zero border glow)
-            Box(
-                modifier = Modifier
-                    .size(46.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(if (darkTheme) OttoTurquoise else InkDark)
-                    .bounceClick(scaleDown = 0.90f, onClick = onQuickAdd),
-                contentAlignment = Alignment.Center
-            ) {
-                PrecisionVectorIcon(
-                    name = "plus",
-                    tint = if (darkTheme) InkDark else Color.White,
-                    size = 20.dp,
-                    triggerKey = navAnimTrigger
+            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                ConcentricNavTabItem(
+                    iconName = "home",
+                    selected = currentTab == "home",
+                    darkTheme = darkTheme,
+                    triggerKey = navAnimTrigger,
+                    onClick = { onSelectTab("home") }
+                )
+            }
+            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                ConcentricNavTabItem(
+                    iconName = "ledger",
+                    selected = currentTab == "ledger",
+                    darkTheme = darkTheme,
+                    triggerKey = navAnimTrigger,
+                    onClick = { onSelectTab("ledger") }
                 )
             }
 
-            MatteNavTabItem(
-                iconName = "wallet",
-                selected = currentTab == "wallets",
-                darkTheme = darkTheme,
-                triggerKey = navAnimTrigger,
-                onClick = { onSelectTab("wallets") }
-            )
-            MatteNavTabItem(
-                iconName = "profile",
-                selected = currentTab == "profile",
-                darkTheme = darkTheme,
-                triggerKey = navAnimTrigger,
-                onClick = { onSelectTab("profile") }
-            )
+            // Center Slot: Circular Quick-Add Button in signature #6BD0C2 OttoTurquoise!
+            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(OttoTurquoise)
+                        .bounceClick(scaleDown = 0.90f, onClick = onQuickAdd),
+                    contentAlignment = Alignment.Center
+                ) {
+                    PrecisionVectorIcon(
+                        name = "plus",
+                        tint = InkDark,
+                        size = 24.dp,
+                        triggerKey = navAnimTrigger
+                    )
+                }
+            }
+
+            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                ConcentricNavTabItem(
+                    iconName = "wallet",
+                    selected = currentTab == "wallets",
+                    darkTheme = darkTheme,
+                    triggerKey = navAnimTrigger,
+                    onClick = { onSelectTab("wallets") }
+                )
+            }
+            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                ConcentricNavTabItem(
+                    iconName = "profile",
+                    selected = currentTab == "profile",
+                    darkTheme = darkTheme,
+                    triggerKey = navAnimTrigger,
+                    onClick = { onSelectTab("profile") }
+                )
+            }
         }
     }
 }
 
 @Composable
-fun MatteNavTabItem(
+fun ConcentricNavTabItem(
     iconName: String,
     selected: Boolean,
     darkTheme: Boolean,
     triggerKey: Int,
     onClick: () -> Unit
 ) {
+    val indicatorScale by animateFloatAsState(
+        targetValue = if (selected) 1.0f else 0.75f,
+        animationSpec = spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessMediumLow),
+        label = "navIndScale"
+    )
     val iconScale by animateFloatAsState(
-        targetValue = if (selected) 1.12f else 1.0f,
+        targetValue = if (selected) 1.10f else 1.0f,
         animationSpec = spring(dampingRatio = 0.48f, stiffness = Spring.StiffnessMedium),
         label = "navIconScale"
     )
 
     val activeTint = if (darkTheme) OttoTurquoise else InkDark
-    val inactiveTint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.58f)
+    val inactiveTint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.62f)
 
-    val pillColor = if (selected) {
-        if (darkTheme) Color(0xFF212733) else Color(0xFFECEEF3)
+    // Concentric CircleShape indicator matching the outer capsule dock curvature!
+    val circleIndicatorColor = if (selected) {
+        if (darkTheme) Color(0xFF212934) else OttoTurquoise.copy(alpha = 0.28f)
     } else {
         Color.Transparent
     }
@@ -1184,17 +1792,17 @@ fun MatteNavTabItem(
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .width(56.dp)
-            .height(44.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(pillColor)
+            .size(46.dp)
+            .scale(if (selected) indicatorScale else 1f)
+            .clip(CircleShape)
+            .background(circleIndicatorColor)
             .bounceClick(scaleDown = 0.90f, onClick = onClick)
     ) {
         Box(modifier = Modifier.scale(iconScale)) {
             PrecisionVectorIcon(
                 name = iconName,
                 tint = if (selected) activeTint else inactiveTint,
-                size = 21.dp,
+                size = 24.dp,
                 triggerKey = if (selected) triggerKey else null
             )
         }
@@ -1246,7 +1854,7 @@ fun EditWalletBalanceDialog(
                 OutlinedTextField(
                     value = inputVal,
                     onValueChange = { inputVal = it },
-                    label = { SingleLineText("Spendable Balance (৳)") },
+                    label = { SingleLineText("Balance (৳)") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Decimal,
@@ -1304,16 +1912,223 @@ fun EditWalletBalanceDialog(
 }
 
 /**
- * V8 Dashboard Screen:
- * - Displays 1-Tap Pending SMS / Notification Auto-Parser Confirmation Pills when detected.
- * - Displays Pending Recurring Expense / Income Confirmations on or after their due date (balance only updates on Confirm!).
- * - Supports toggling the Monthly Cap ON/OFF.
- * - Long-pressing the TOTAL BALANCE card (or tapping the Vault badge when Stealth Mode is OFF) opens the PIN/Biometric Savings Vault!
+ * Press & Hold (Long-Press) Edit Past Transaction Dialog (`EditTransactionDialog`):
+ * Allows editing Type (`Expense`, `Income`, `Transfer`), Amount, Date (with Calendar Picker),
+ * Description, Category, and Wallet (`From` / `To`).
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DashboardV8Screen(
+fun EditTransactionDialog(
+    tx: TransactionEntity,
+    wallets: List<WalletEntity>,
+    categories: List<CategoryEntity>,
+    darkTheme: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (String, Double, String, String, String, String?, String) -> Unit,
+    onDelete: () -> Unit
+) {
+    var editType by remember { mutableStateOf(tx.type) }
+    var editAmount by remember { mutableStateOf(tx.amount.roundToInt().toString()) }
+    var editDesc by remember { mutableStateOf(tx.description) }
+    var editCategory by remember { mutableStateOf(tx.category) }
+    var editWallet by remember { mutableStateOf(tx.wallet) }
+    var editToWallet by remember { mutableStateOf(tx.toWallet ?: wallets.firstOrNull { it.name != tx.wallet }?.name ?: "Cash") }
+    var editDate by remember { mutableStateOf(tx.date) }
+    var showDatePicker by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                SingleLineText("Edit Transaction", style = MaterialTheme.typography.titleLarge)
+                IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+                    PrecisionVectorIcon("trash", BinanceRed, size = 18.dp)
+                }
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(Spacing.SM)
+            ) {
+                // Consistent terminology: Expense | Income | Transfer
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                    listOf("EXPENSE" to "Expense", "INCOME" to "Income", "TRANSFER" to "Transfer").forEach { (k, lbl) ->
+                        val isSel = editType == k
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (isSel) OttoTurquoise else MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(34.dp)
+                                .bounceClick {
+                                    editType = k
+                                    if (k != "TRANSFER") {
+                                        editCategory = categories.firstOrNull { it.kind == k }?.name ?: "Other"
+                                    }
+                                }
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                SingleLineText(
+                                    text = lbl,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontSize = 12.sp,
+                                    color = if (isSel) InkDark else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+                }
+
+                OutlinedTextField(
+                    value = editAmount,
+                    onValueChange = { editAmount = it },
+                    label = { SingleLineText("Amount (৳)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Next),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // Date Bar inside Edit Dialog
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
+                        .bounceClick { showDatePicker = true }
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxSize().padding(horizontal = Spacing.MD),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        SingleLineText("Date: $editDate", style = MaterialTheme.typography.titleMedium)
+                        PrecisionVectorIcon("calendar", MaterialTheme.colorScheme.onSurfaceVariant, size = 18.dp)
+                    }
+                }
+
+                OutlinedTextField(
+                    value = editDesc,
+                    onValueChange = { editDesc = it },
+                    label = { SingleLineText("Description") },
+                    singleLine = false,
+                    maxLines = 3,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                if (editType != "TRANSFER") {
+                    SingleLineText("Category", style = MaterialTheme.typography.labelSmall)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(categories.filter { it.kind == editType }) { cat ->
+                            WalletChoicePill(
+                                label = cat.name,
+                                selected = editCategory == cat.name,
+                                darkTheme = darkTheme,
+                                onClick = { editCategory = cat.name }
+                            )
+                        }
+                    }
+                }
+
+                SingleLineText(if (editType == "TRANSFER") "From Wallet" else "Wallet", style = MaterialTheme.typography.labelSmall)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(wallets) { w ->
+                        WalletChoicePill(
+                            label = w.name,
+                            selected = editWallet == w.name,
+                            darkTheme = darkTheme,
+                            onClick = { editWallet = w.name }
+                        )
+                    }
+                }
+
+                if (editType == "TRANSFER") {
+                    SingleLineText("To Wallet", style = MaterialTheme.typography.labelSmall)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(wallets) { w ->
+                            WalletChoicePill(
+                                label = w.name,
+                                selected = editToWallet == w.name,
+                                darkTheme = darkTheme,
+                                onClick = { editToWallet = w.name }
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val amt = RuleEngine.evaluateMathExpression(editAmount)
+                    if (amt > 0.0) {
+                        onSave(
+                            editType,
+                            amt,
+                            editDesc,
+                            editCategory,
+                            editWallet,
+                            if (editType == "TRANSFER") editToWallet else null,
+                            editDate
+                        )
+                    }
+                },
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                SingleLineText("Save", color = MaterialTheme.colorScheme.onPrimary)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                SingleLineText("Cancel")
+            }
+        }
+    )
+
+    if (showDatePicker) {
+        val pickerState = rememberDatePickerState(initialSelectedDateMillis = System.currentTimeMillis())
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        pickerState.selectedDateMillis?.let { millis ->
+                            editDate = Instant.ofEpochMilli(millis).atZone(ZoneId.of("UTC")).toLocalDate().toString()
+                        }
+                        showDatePicker = false
+                    }
+                ) {
+                    SingleLineText("Select", color = MaterialTheme.colorScheme.onPrimary)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { SingleLineText("Cancel") }
+            }
+        ) {
+            DatePicker(state = pickerState)
+        }
+    }
+}
+
+/**
+ * V9 Dashboard Screen:
+ * - Removed the Vault button/trigger from the Home screen.
+ * - Uses consistent terminology (`Expense | Income | Trend`).
+ * - Shows a Floating Notification Button at the bottom-right ONLY when there are pending SMS alerts or due Scheduler rules!
+ * - Supports Press & Hold on any transaction row to edit, and Confirmation + Undo on delete.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DashboardV9Screen(
     totalAvailable: Double,
-    totalVaultSaved: Double,
     monthlyBudget: Double,
     monthlyCapEnabled: Boolean,
     recurringEnabled: Boolean,
@@ -1324,18 +2139,17 @@ fun DashboardV8Screen(
     categories: List<CategoryEntity>,
     excludeMajor: Boolean,
     darkTheme: Boolean,
-    isVaultStealthMode: Boolean,
     vm: OttoViewModel,
     onToggleMajor: () -> Unit,
-    onOpenSavingsVault: () -> Unit,
     onSeeAllLedger: () -> Unit,
-    onDeleteTx: (TransactionEntity) -> Unit
+    onRequestEditTx: (TransactionEntity) -> Unit,
+    onRequestDeleteTx: (TransactionEntity) -> Unit
 ) {
     val today = remember { LocalDate.now() }
     val currentMonthPrefix = remember(today) { today.toString().substring(0, 7) }
+    var showNotificationsSheet by remember { mutableStateOf(false) }
     var alertPopupError by remember { mutableStateOf<String?>(null) }
 
-    // Filter out VAULT_LOCK / VAULT_RELEASE from regular spending/income metrics
     val visibleTransactions = remember(transactions) {
         transactions.filter { it.type != "VAULT_LOCK" && it.type != "VAULT_RELEASE" }
     }
@@ -1363,13 +2177,14 @@ fun DashboardV8Screen(
         }
     }
 
-    // Identify due recurring rules that have not yet been confirmed for `currentMonthPrefix`
     val dueRecurringRules = remember(recurringRules, recurringEnabled, today, currentMonthPrefix) {
         if (!recurringEnabled) emptyList()
         else recurringRules.filter { rule ->
             rule.enabled && rule.lastConfirmedPeriod != currentMonthPrefix && today.dayOfMonth >= rule.dayOfMonth
         }
     }
+
+    val totalPendingAlertsCount = pendingSmsDetections.size + dueRecurringRules.size
 
     val last7Dates = remember(today) {
         (6 downTo 0).map { today.minusDays(it.toLong()) }
@@ -1415,513 +2230,341 @@ fun DashboardV8Screen(
 
     val lineReveal = remember { Animatable(0f) }
     LaunchedEffect(chartMode, dayValues) {
-        if (chartMode == "PACE") {
+        if (chartMode == "TREND") {
             lineReveal.snapTo(0f)
             lineReveal.animateTo(1f, animationSpec = tween(520, easing = FastOutSlowInEasing))
         }
     }
 
-    LazyColumn(
-        verticalArrangement = Arrangement.spacedBy(Spacing.MD),
-        contentPadding = PaddingValues(vertical = Spacing.XS)
-    ) {
-        // A. 1-Tap On-Device SMS / Notification Auto-Parser Confirmation Pills
-        items(pendingSmsDetections, key = { it.id }) { detection ->
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = if (darkTheme) Color(0xFF172627) else Color(0xFFEAFBF8),
-                border = BorderStroke(1.dp, OttoTurquoise.copy(alpha = 0.65f)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(Spacing.MD),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.XS)
+    Box(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
+            verticalArrangement = Arrangement.spacedBy(Spacing.MD),
+            contentPadding = PaddingValues(top = Spacing.XS, bottom = 76.dp)
+        ) {
+            // 1. Hero Total Balance Card (No Vault option here—Vault lives on the Wallets screen!)
+            item {
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier.fillMaxWidth()
+                    Column(
+                        modifier = Modifier.padding(Spacing.LG),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.SM)
                     ) {
-                        SingleLineText(
-                            text = "SMART ALERT DETECTED • ${detection.provider.uppercase()}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (darkTheme) OttoTurquoise else OttoTurquoiseDeep
-                        )
-                        SingleLineText(
-                            text = detection.detectedDate,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Text(
-                        text = detection.summaryText,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(Spacing.XS),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Button(
-                            onClick = {
-                                val err = vm.approvePendingSmsDetection(detection, balances)
-                                if (err != null) alertPopupError = err
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.weight(1f).height(38.dp),
-                            contentPadding = PaddingValues(0.dp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.Top
                         ) {
-                            SingleLineText("Log Transaction", style = MaterialTheme.typography.titleMedium, fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimary)
-                        }
-                        OutlinedButton(
-                            onClick = { vm.dismissPendingSmsDetection(detection.id) },
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.weight(0.7f).height(38.dp),
-                            contentPadding = PaddingValues(0.dp)
-                        ) {
-                            SingleLineText("Dismiss", style = MaterialTheme.typography.titleMedium, fontSize = 12.sp)
-                        }
-                    }
-                }
-            }
-        }
-
-        // B. Pending Recurring Expense / Income Confirmations (Requires Explicit User Confirmation!)
-        items(dueRecurringRules, key = { it.id }) { rule ->
-            val isInc = rule.type == "INCOME"
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(1.2.dp, if (isInc) BinanceGreen else OttoTurquoise),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(Spacing.MD),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.XS)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        SingleLineText(
-                            text = "RECURRING DUE (DAY ${rule.dayOfMonth}) • CONFIRMATION REQUIRED",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (isInc) BinanceGreen else OttoTurquoise
-                        )
-                        SingleLineText(
-                            text = "%02d:%02d".format(rule.notifyHour, rule.notifyMinute),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    SingleLineText(
-                        text = "${rule.title}: ${if (isInc) "+" else "-"}৳${rule.amount.roundToInt()} (${rule.wallet})",
-                        style = MaterialTheme.typography.titleLarge
-                    )
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(Spacing.XS),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Button(
-                            onClick = {
-                                val err = vm.confirmDueRecurringRule(rule, currentMonthPrefix, balances)
-                                if (err != null) alertPopupError = err
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isInc) BinanceGreen else MaterialTheme.colorScheme.primary
-                            ),
-                            modifier = Modifier.weight(1.2f).height(38.dp),
-                            contentPadding = PaddingValues(0.dp)
-                        ) {
-                            SingleLineText(
-                                text = "Confirm ${if (isInc) "+৳" else "-৳"}${rule.amount.roundToInt()}",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontSize = 12.sp,
-                                color = if (isInc) InkDark else MaterialTheme.colorScheme.onPrimary
-                            )
-                        }
-                        OutlinedButton(
-                            onClick = { vm.skipDueRecurringRuleThisMonth(rule, currentMonthPrefix) },
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.weight(0.8f).height(38.dp),
-                            contentPadding = PaddingValues(0.dp)
-                        ) {
-                            SingleLineText("Skip Month", style = MaterialTheme.typography.titleMedium, fontSize = 12.sp)
-                        }
-                    }
-                }
-            }
-        }
-
-        // 1. Hero Spendable Total Balance Card (Long-press opens the PIN/Biometric Savings Vault!)
-        item {
-            Surface(
-                shape = RoundedCornerShape(24.dp),
-                color = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .pointerInput(Unit) {
-                        detectTapGestures(
-                            onLongPress = { onOpenSavingsVault() }
-                        )
-                    }
-            ) {
-                Column(
-                    modifier = Modifier.padding(Spacing.LG),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.SM)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.Top
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            SingleLineText(
-                                text = "SPENDABLE BALANCE",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            SingleLineText("৳$animatedBalance", style = MaterialTheme.typography.displayLarge)
-                        }
-
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            // Discreet Vault Pill (hidden when Stealth Mode is ON; in Stealth Mode, long-press card to open Vault!)
-                            if (!isVaultStealthMode) {
-                                Surface(
-                                    shape = CircleShape,
-                                    color = if (darkTheme) Color(0xFF1A2829) else Color(0xFFEAFBF8),
-                                    border = BorderStroke(1.dp, OttoTurquoise.copy(alpha = 0.50f)),
-                                    modifier = Modifier.bounceClick { onOpenSavingsVault() }
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp)
-                                    ) {
-                                        PrecisionVectorIcon("vault", if (darkTheme) OttoTurquoise else OttoTurquoiseDeep, size = 13.dp)
-                                        SingleLineText(
-                                            text = if (totalVaultSaved > 0 && vm.isVaultSessionUnlocked.collectAsState().value) "৳${totalVaultSaved.roundToInt()}" else "Vault",
-                                            style = MaterialTheme.typography.titleMedium,
-                                            fontSize = 12.sp,
-                                            color = if (darkTheme) OttoTurquoise else OttoTurquoiseDeep
-                                        )
-                                    }
-                                }
+                            Column(modifier = Modifier.weight(1f)) {
+                                SingleLineText(
+                                    text = "AVAILABLE BALANCE",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                SingleLineText("৳$animatedBalance", style = MaterialTheme.typography.displayLarge)
                             }
 
                             Surface(
                                 shape = CircleShape,
-                                color = if (darkTheme) Color(0xFF212733) else MaterialTheme.colorScheme.surfaceVariant,
+                                color = if (darkTheme) Color(0xFF212733) else OttoTurquoiseSoftLight,
+                                border = BorderStroke(1.dp, OttoTurquoise.copy(alpha = 0.45f)),
                                 modifier = Modifier.bounceClick { onToggleMajor() }
                             ) {
                                 SingleLineText(
                                     text = if (excludeMajor) "Daily" else "All",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontSize = 12.sp,
-                                    color = if (darkTheme) OttoTurquoise else MaterialTheme.colorScheme.onSurface,
+                                    color = if (darkTheme) OttoTurquoise else InkDark,
                                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
                                 )
                             }
                         }
-                    }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            SingleLineText(
+                                text = if (monthlyCapEnabled) {
+                                    "Expense ৳$animatedSpend / ৳${monthlyBudget.roundToInt()}"
+                                } else {
+                                    "Monthly Expense: ৳$animatedSpend"
+                                },
+                                style = MaterialTheme.typography.titleMedium,
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f)
+                            )
+                            SingleLineText(
+                                text = "Avg ৳$dailyAvg/d",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontSize = 13.sp,
+                                color = if (darkTheme) OttoTurquoise else OttoTurquoiseDeep
+                            )
+                        }
+
+                        AnimatedVisibility(visible = monthlyCapEnabled) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(14.dp)
+                                    .clip(RoundedCornerShape(7.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                            ) {
+                                if (budgetRatio > 0f) {
+                                    val barColor = if (totalSpend > monthlyBudget * 0.85) BinanceRed else OttoTurquoise
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth(budgetRatio)
+                                            .fillMaxHeight()
+                                            .clip(RoundedCornerShape(7.dp))
+                                            .background(barColor)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2. Strictly Fixed-Height 7D Expense / Income / Trend Card (`238.dp` outer, `148.dp` inner)
+            item {
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(238.dp)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = Spacing.LG, vertical = 16.dp),
+                        verticalArrangement = Arrangement.SpaceBetween
                     ) {
-                        SingleLineText(
-                            text = if (monthlyCapEnabled) {
-                                "Spent ৳$animatedSpend / ৳${monthlyBudget.roundToInt()}"
-                            } else {
-                                "Spent this month: ৳$animatedSpend"
-                            },
-                            style = MaterialTheme.typography.titleMedium,
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.weight(1f)
-                        )
-                        SingleLineText(
-                            text = "Avg ৳$dailyAvg/d",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontSize = 13.sp,
-                            color = if (darkTheme) OttoTurquoise else BinanceGreen
-                        )
-                    }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                SingleLineText(
+                                    text = when (chartMode) {
+                                        "INCOME" -> "7D INCOME"
+                                        "TREND" -> "7D TREND"
+                                        else -> "7D EXPENSE"
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                val headerNum = when (chartMode) {
+                                    "INCOME" -> "+৳$animatedWindowSum"
+                                    "TREND" -> "৳$dailyAvg/d"
+                                    else -> "৳$animatedWindowSum"
+                                }
+                                SingleLineText(text = headerNum, style = MaterialTheme.typography.headlineLarge)
+                            }
 
-                    // Monthly Cap Progress Bar (Shown when Monthly Cap Toggle is ON)
-                    AnimatedVisibility(visible = monthlyCapEnabled) {
+                            // Unified Terminology: Expense | Income | Trend
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .padding(3.dp),
+                                horizontalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                listOf("EXPENSE" to "Expense", "INCOME" to "Income", "TREND" to "Trend").forEach { (key, lbl) ->
+                                    val active = chartMode == key
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(9.dp))
+                                            .background(if (active) OttoTurquoise else Color.Transparent)
+                                            .bounceClick { chartMode = key }
+                                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                                    ) {
+                                        SingleLineText(
+                                            text = lbl,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontSize = 11.sp,
+                                            color = if (active) InkDark else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(14.dp)
-                                .clip(RoundedCornerShape(7.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .height(148.dp)
                         ) {
-                            if (budgetRatio > 0f) {
-                                val barColor = if (totalSpend > monthlyBudget * 0.85) BinanceRed else MaterialTheme.colorScheme.primary
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth(budgetRatio)
-                                        .fillMaxHeight()
-                                        .clip(RoundedCornerShape(7.dp))
-                                        .background(barColor)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
+                            if (chartMode == "TREND") {
+                                val lineColor = if (darkTheme) OttoTurquoise else OttoTurquoiseDeep
 
-        // 2. Strictly Fixed-Height 7D Spend / Income / Line Card (238.dp outer, 148.dp inner chart viewport)
-        item {
-            Surface(
-                shape = RoundedCornerShape(24.dp),
-                color = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(238.dp)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = Spacing.LG, vertical = 16.dp),
-                    verticalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(44.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            SingleLineText(
-                                text = when (chartMode) {
-                                    "INCOME" -> "7D INCOME"
-                                    "PACE" -> "7D TREND"
-                                    else -> "7D SPEND"
-                                },
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            val headerNum = when (chartMode) {
-                                "INCOME" -> "+৳$animatedWindowSum"
-                                "PACE" -> "৳$dailyAvg/d"
-                                else -> "৳$animatedWindowSum"
-                            }
-                            SingleLineText(text = headerNum, style = MaterialTheme.typography.headlineLarge)
-                        }
-
-                        Row(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant)
-                                .padding(3.dp),
-                            horizontalArrangement = Arrangement.spacedBy(2.dp)
-                        ) {
-                            listOf("EXPENSE" to "Out", "INCOME" to "In", "PACE" to "Line").forEach { (key, lbl) ->
-                                val active = chartMode == key
-                                val activeBg = if (darkTheme) OttoTurquoise else MaterialTheme.colorScheme.surface
-                                val activeText = if (darkTheme) InkDark else MaterialTheme.colorScheme.onSurface
-                                Box(
+                                Canvas(
                                     modifier = Modifier
-                                        .clip(RoundedCornerShape(9.dp))
-                                        .background(if (active) activeBg else Color.Transparent)
-                                        .bounceClick { chartMode = key }
-                                        .padding(horizontal = 12.dp, vertical = 5.dp)
+                                        .fillMaxWidth()
+                                        .height(108.dp)
+                                        .align(Alignment.TopCenter)
                                 ) {
-                                    SingleLineText(
-                                        text = lbl,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontSize = 12.sp,
-                                        color = if (active) activeText else MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
-                    }
+                                    val w = size.width
+                                    val h = size.height
+                                    val padX = 20.dp.toPx()
+                                    val usableW = (w - padX * 2f).coerceAtLeast(1f)
 
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(148.dp)
-                    ) {
-                        if (chartMode == "PACE") {
-                            val lineColor = if (darkTheme) OttoTurquoise else InkDark
-
-                            Canvas(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(108.dp)
-                                    .align(Alignment.TopCenter)
-                            ) {
-                                val w = size.width
-                                val h = size.height
-                                val padX = 20.dp.toPx()
-                                val usableW = (w - padX * 2f).coerceAtLeast(1f)
-
-                                val pts = dayValues.mapIndexed { i, v ->
-                                    val x = padX + (i.toFloat() / 6f) * usableW
-                                    val ratio = (v / maxDayVal).toFloat().coerceIn(0f, 1f)
-                                    val y = (h * 0.82f) - (ratio * (h * 0.56f))
-                                    Offset(x, y)
-                                }
-
-                                val splinePath = Path().apply {
-                                    moveTo(pts.first().x, pts.first().y)
-                                    for (i in 0 until pts.size - 1) {
-                                        val p0 = pts[i]
-                                        val p1 = pts[i + 1]
-                                        val cx = (p0.x + p1.x) / 2f
-                                        cubicTo(cx, p0.y, cx, p1.y, p1.x, p1.y)
+                                    val pts = dayValues.mapIndexed { i, v ->
+                                        val x = padX + (i.toFloat() / 6f) * usableW
+                                        val ratio = (v / maxDayVal).toFloat().coerceIn(0f, 1f)
+                                        val y = (h * 0.82f) - (ratio * (h * 0.56f))
+                                        Offset(x, y)
                                     }
-                                }
 
-                                val fillPath = Path().apply {
-                                    addPath(splinePath)
-                                    lineTo(pts.last().x, h)
-                                    lineTo(pts.first().x, h)
-                                    close()
-                                }
-
-                                clipRect(right = w * lineReveal.value) {
-                                    drawPath(
-                                        path = fillPath,
-                                        brush = Brush.verticalGradient(
-                                            colors = listOf(lineColor.copy(alpha = 0.22f), Color.Transparent),
-                                            startY = 0f,
-                                            endY = h
-                                        )
-                                    )
-                                    drawPath(
-                                        path = splinePath,
-                                        color = lineColor,
-                                        style = Stroke(width = 2.8.dp.toPx(), cap = StrokeCap.Round)
-                                    )
-                                }
-
-                                val selPt = pts.getOrElse(selectedDayIndex) { pts.last() }
-                                drawLine(
-                                    color = lineColor.copy(alpha = 0.30f),
-                                    start = Offset(selPt.x, selPt.y),
-                                    end = Offset(selPt.x, h),
-                                    strokeWidth = 1.5.dp.toPx()
-                                )
-                                drawCircle(color = lineColor.copy(alpha = 0.28f), radius = 9.dp.toPx(), center = selPt)
-                                drawCircle(color = lineColor, radius = 4.5.dp.toPx(), center = selPt)
-                            }
-                        }
-
-                        val accent = when {
-                            chartMode == "INCOME" -> BinanceGreen
-                            darkTheme -> OttoTurquoise
-                            else -> InkDark
-                        }
-
-                        Row(
-                            modifier = Modifier.fillMaxSize(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.Bottom
-                        ) {
-                            last7Dates.forEachIndexed { idx, dateObj ->
-                                val isSelected = idx == selectedDayIndex
-                                val v = dayValues[idx]
-                                val targetRatio = if (v <= 0.0) 0.10f else (v / maxDayVal).toFloat().coerceIn(0.18f, 1f)
-                                val animRatio by animateFloatAsState(
-                                    targetValue = targetRatio,
-                                    animationSpec = spring(dampingRatio = 0.62f, stiffness = Spring.StiffnessMediumLow),
-                                    label = "stem_$idx"
-                                )
-                                val dLabel = dateObj.format(dayShortFormatter).take(1)
-
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.SpaceBetween,
-                                    modifier = Modifier
-                                        .width(40.dp)
-                                        .fillMaxHeight()
-                                        .clip(CircleShape)
-                                        .background(
-                                            if (isSelected) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (chartMode == "PACE") 0.45f else 1f)
-                                            else Color.Transparent
-                                        )
-                                        .bounceClick { selectedDayIndex = idx }
-                                        .padding(vertical = 6.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(20.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        if (isSelected) {
-                                            SingleLineText(
-                                                text = "৳${v.roundToInt()}",
-                                                style = MaterialTheme.typography.titleMedium,
-                                                fontSize = 10.sp,
-                                                color = if (darkTheme) OttoTurquoise else MaterialTheme.colorScheme.onSurface
-                                            )
+                                    val splinePath = Path().apply {
+                                        moveTo(pts.first().x, pts.first().y)
+                                        for (i in 0 until pts.size - 1) {
+                                            val p0 = pts[i]
+                                            val p1 = pts[i + 1]
+                                            val cx = (p0.x + p1.x) / 2f
+                                            cubicTo(cx, p0.y, cx, p1.y, p1.x, p1.y)
                                         }
                                     }
 
-                                    Box(
+                                    val fillPath = Path().apply {
+                                        addPath(splinePath)
+                                        lineTo(pts.last().x, h)
+                                        lineTo(pts.first().x, h)
+                                        close()
+                                    }
+
+                                    clipRect(right = w * lineReveal.value) {
+                                        drawPath(
+                                            path = fillPath,
+                                            brush = Brush.verticalGradient(
+                                                colors = listOf(lineColor.copy(alpha = 0.24f), Color.Transparent),
+                                                startY = 0f,
+                                                endY = h
+                                            )
+                                        )
+                                        drawPath(
+                                            path = splinePath,
+                                            color = lineColor,
+                                            style = Stroke(width = 2.8.dp.toPx(), cap = StrokeCap.Round)
+                                        )
+                                    }
+
+                                    val selPt = pts.getOrElse(selectedDayIndex) { pts.last() }
+                                    drawLine(
+                                        color = lineColor.copy(alpha = 0.30f),
+                                        start = Offset(selPt.x, selPt.y),
+                                        end = Offset(selPt.x, h),
+                                        strokeWidth = 1.5.dp.toPx()
+                                    )
+                                    drawCircle(color = lineColor.copy(alpha = 0.28f), radius = 9.dp.toPx(), center = selPt)
+                                    drawCircle(color = lineColor, radius = 4.5.dp.toPx(), center = selPt)
+                                }
+                            }
+
+                            val accent = when {
+                                chartMode == "INCOME" -> BinanceGreen
+                                else -> OttoTurquoise
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxSize(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.Bottom
+                            ) {
+                                last7Dates.forEachIndexed { idx, dateObj ->
+                                    val isSelected = idx == selectedDayIndex
+                                    val v = dayValues[idx]
+                                    val targetRatio = if (v <= 0.0) 0.10f else (v / maxDayVal).toFloat().coerceIn(0.18f, 1f)
+                                    val animRatio by animateFloatAsState(
+                                        targetValue = targetRatio,
+                                        animationSpec = spring(dampingRatio = 0.62f, stiffness = Spring.StiffnessMediumLow),
+                                        label = "stem_$idx"
+                                    )
+                                    val dLabel = dateObj.format(dayShortFormatter).take(1)
+
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.SpaceBetween,
                                         modifier = Modifier
-                                            .width(12.dp)
-                                            .height(74.dp),
-                                        contentAlignment = Alignment.BottomCenter
+                                            .width(40.dp)
+                                            .fillMaxHeight()
+                                            .clip(CircleShape)
+                                            .background(
+                                                if (isSelected) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (chartMode == "TREND") 0.45f else 1f)
+                                                else Color.Transparent
+                                            )
+                                            .bounceClick { selectedDayIndex = idx }
+                                            .padding(vertical = 6.dp)
                                     ) {
-                                        if (chartMode != "PACE") {
-                                            Column(
-                                                horizontalAlignment = Alignment.CenterHorizontally,
-                                                verticalArrangement = Arrangement.Bottom,
-                                                modifier = Modifier.fillMaxHeight()
-                                            ) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .size(6.dp)
-                                                        .clip(CircleShape)
-                                                        .background(if (v > 0) accent else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f))
-                                                )
-                                                Box(
-                                                    modifier = Modifier
-                                                        .width(2.5.dp)
-                                                        .height(62.dp * animRatio)
-                                                        .background(if (v > 0) accent.copy(alpha = 0.75f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.22f))
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(20.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            if (isSelected) {
+                                                SingleLineText(
+                                                    text = "৳${v.roundToInt()}",
+                                                    style = MaterialTheme.typography.titleMedium,
+                                                    fontSize = 10.sp,
+                                                    color = if (darkTheme) OttoTurquoise else OttoTurquoiseDeep
                                                 )
                                             }
                                         }
-                                    }
 
-                                    val circleBg = when {
-                                        isSelected && darkTheme -> OttoTurquoise
-                                        isSelected -> InkDark
-                                        else -> MaterialTheme.colorScheme.surfaceVariant
-                                    }
-                                    val circleText = when {
-                                        isSelected && darkTheme -> InkDark
-                                        isSelected -> Color.White
-                                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                                    }
-                                    Box(
-                                        modifier = Modifier
-                                            .size(30.dp)
-                                            .clip(CircleShape)
-                                            .background(circleBg),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        SingleLineText(
-                                            text = dLabel,
-                                            style = MaterialTheme.typography.titleMedium,
-                                            fontSize = 11.sp,
-                                            color = circleText
-                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .width(12.dp)
+                                                .height(74.dp),
+                                            contentAlignment = Alignment.BottomCenter
+                                        ) {
+                                            if (chartMode != "TREND") {
+                                                Column(
+                                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                                    verticalArrangement = Arrangement.Bottom,
+                                                    modifier = Modifier.fillMaxHeight()
+                                                ) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(6.dp)
+                                                            .clip(CircleShape)
+                                                            .background(if (v > 0) accent else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f))
+                                                    )
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .width(2.5.dp)
+                                                            .height(62.dp * animRatio)
+                                                            .background(if (v > 0) accent.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.22f))
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        Box(
+                                            modifier = Modifier
+                                                .size(30.dp)
+                                                .clip(CircleShape)
+                                                .background(if (isSelected) OttoTurquoise else MaterialTheme.colorScheme.surfaceVariant),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            SingleLineText(
+                                                text = dLabel,
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontSize = 11.sp,
+                                                color = if (isSelected) InkDark else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -1929,60 +2572,240 @@ fun DashboardV8Screen(
                     }
                 }
             }
-        }
 
-        // 3. Recent Transactions Header & Monochrome List
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                SingleLineText("Recent Transactions", style = MaterialTheme.typography.titleLarge)
-                if (visibleTransactions.isNotEmpty()) {
-                    TextButton(onClick = onSeeAllLedger) {
-                        SingleLineText(
-                            "See All",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontSize = 12.sp,
-                            color = if (darkTheme) OttoTurquoise else MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
-            }
-        }
-
-        if (visibleTransactions.isEmpty()) {
+            // 3. Recent Transactions Header & Monochrome List (Press & Hold to Edit!)
             item {
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                    modifier = Modifier.fillMaxWidth()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(
-                        modifier = Modifier.padding(Spacing.XL),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(Spacing.XS)
-                    ) {
-                        SingleLineText("No transactions yet", style = MaterialTheme.typography.titleMedium)
-                        SingleLineText(
-                            "Tap '+' below to add your first entry",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    Column {
+                        SingleLineText("Recent Transactions", style = MaterialTheme.typography.titleLarge)
+                        if (visibleTransactions.isNotEmpty()) {
+                            SingleLineText(
+                                "Press & hold any entry to edit",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    if (visibleTransactions.isNotEmpty()) {
+                        TextButton(onClick = onSeeAllLedger) {
+                            SingleLineText(
+                                "See All",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontSize = 12.sp,
+                                color = if (darkTheme) OttoTurquoise else OttoTurquoiseDeep
+                            )
+                        }
                     }
                 }
             }
-        } else {
-            items(visibleTransactions.take(6), key = { it.id }) { tx ->
-                val catObj = categories.find { it.name == tx.category }
-                TransactionV8MonochromeRow(
-                    tx = tx,
-                    iconName = if (tx.type == "TRANSFER") "transfer" else (catObj?.iconName ?: "ledger"),
-                    darkTheme = darkTheme,
-                    onDelete = { onDeleteTx(tx) }
-                )
+
+            if (visibleTransactions.isEmpty()) {
+                item {
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(Spacing.XL),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(Spacing.XS)
+                        ) {
+                            SingleLineText("No transactions yet", style = MaterialTheme.typography.titleMedium)
+                            SingleLineText(
+                                "Tap '+' below to add your first entry",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            } else {
+                items(visibleTransactions.take(6), key = { it.id }) { tx ->
+                    val catObj = categories.find { it.name == tx.category }
+                    TransactionV9MonochromeRow(
+                        tx = tx,
+                        iconName = if (tx.type == "TRANSFER") "transfer" else (catObj?.iconName ?: "ledger"),
+                        darkTheme = darkTheme,
+                        onLongPressEdit = { onRequestEditTx(tx) },
+                        onDelete = { onRequestDeleteTx(tx) }
+                    )
+                }
+            }
+        }
+
+        // FLOATING NOTIFICATION / SMS BUTTON AT BOTTOM-RIGHT OF HOME
+        // Appears ONLY when there is a new SMS alert or a due Scheduler confirmation!
+        AnimatedVisibility(
+            visible = totalPendingAlertsCount > 0,
+            enter = scaleIn(spring(dampingRatio = 0.55f)) + fadeIn(),
+            exit = scaleOut() + fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(bottom = 14.dp, end = 4.dp)
+        ) {
+            val pulseInf = rememberInfiniteTransition(label = "notifFabPulse")
+            val fabScale by pulseInf.animateFloat(
+                initialValue = 1.0f,
+                targetValue = 1.06f,
+                animationSpec = infiniteRepeatable(tween(650), RepeatMode.Reverse),
+                label = "fabScale"
+            )
+
+            Surface(
+                shape = CircleShape,
+                color = OttoTurquoise,
+                shadowElevation = 8.dp,
+                modifier = Modifier
+                    .scale(fabScale)
+                    .bounceClick { showNotificationsSheet = true }
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 13.dp)
+                ) {
+                    PrecisionVectorIcon("bell", InkDark, size = 20.dp, triggerKey = totalPendingAlertsCount)
+                    SingleLineText(
+                        text = "$totalPendingAlertsCount New ${if (totalPendingAlertsCount == 1) "Alert" else "Alerts"}",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = InkDark
+                    )
+                }
+            }
+        }
+    }
+
+    // Modal Sheet for Pending SMS Alerts & Due Scheduler Items (Opened by the Floating Notification Button)
+    if (showNotificationsSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showNotificationsSheet = false },
+            containerColor = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.statusBarsPadding()
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = Spacing.LG, vertical = Spacing.MD)
+                    .navigationBarsPadding(),
+                verticalArrangement = Arrangement.spacedBy(Spacing.MD)
+            ) {
+                SingleLineText("Pending Notifications & Confirmations", style = MaterialTheme.typography.headlineLarge)
+
+                if (pendingSmsDetections.isEmpty() && dueRecurringRules.isEmpty()) {
+                    SingleLineText(
+                        "All caught up! No pending SMS alerts or scheduled items.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(Spacing.SM),
+                        modifier = Modifier.heightIn(max = 420.dp)
+                    ) {
+                        items(pendingSmsDetections, key = { it.id }) { detection ->
+                            Surface(
+                                shape = RoundedCornerShape(18.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                border = BorderStroke(1.dp, OttoTurquoise.copy(alpha = 0.55f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(Spacing.MD),
+                                    verticalArrangement = Arrangement.spacedBy(Spacing.XS)
+                                ) {
+                                    SingleLineText(
+                                        text = "SMS / NOTIFICATION • ${detection.provider.uppercase()}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (darkTheme) OttoTurquoise else OttoTurquoiseDeep
+                                    )
+                                    Text(
+                                        text = detection.summaryText,
+                                        style = MaterialTheme.typography.titleMedium
+                                    )
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(Spacing.XS),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Button(
+                                            onClick = {
+                                                val err = vm.approvePendingSmsDetection(detection, balances)
+                                                if (err != null) alertPopupError = err
+                                            },
+                                            shape = RoundedCornerShape(12.dp),
+                                            modifier = Modifier.weight(1f).height(38.dp),
+                                            contentPadding = PaddingValues(0.dp)
+                                        ) {
+                                            SingleLineText("Confirm", style = MaterialTheme.typography.titleMedium, fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimary)
+                                        }
+                                        OutlinedButton(
+                                            onClick = { vm.dismissPendingSmsDetection(detection.id) },
+                                            shape = RoundedCornerShape(12.dp),
+                                            modifier = Modifier.weight(0.8f).height(38.dp),
+                                            contentPadding = PaddingValues(0.dp)
+                                        ) {
+                                            SingleLineText("Dismiss", style = MaterialTheme.typography.titleMedium, fontSize = 12.sp)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        items(dueRecurringRules, key = { it.id }) { rule ->
+                            val isInc = rule.type == "INCOME"
+                            Surface(
+                                shape = RoundedCornerShape(18.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                border = BorderStroke(1.dp, if (isInc) BinanceGreen else OttoTurquoise),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(Spacing.MD),
+                                    verticalArrangement = Arrangement.spacedBy(Spacing.XS)
+                                ) {
+                                    SingleLineText(
+                                        text = "SCHEDULER DUE (DAY ${rule.dayOfMonth}) • ${rule.type}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (isInc) BinanceGreen else OttoTurquoiseDeep
+                                    )
+                                    SingleLineText(
+                                        text = "${rule.title}: ${if (isInc) "+" else "-"}৳${rule.amount.roundToInt()} (${rule.wallet})",
+                                        style = MaterialTheme.typography.titleLarge
+                                    )
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(Spacing.XS),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Button(
+                                            onClick = {
+                                                val err = vm.confirmDueRecurringRule(rule, currentMonthPrefix, balances)
+                                                if (err != null) alertPopupError = err
+                                            },
+                                            shape = RoundedCornerShape(12.dp),
+                                            modifier = Modifier.weight(1.2f).height(38.dp),
+                                            contentPadding = PaddingValues(0.dp)
+                                        ) {
+                                            SingleLineText("Confirm", style = MaterialTheme.typography.titleMedium, fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimary)
+                                        }
+                                        OutlinedButton(
+                                            onClick = { vm.skipDueRecurringRuleThisMonth(rule, currentMonthPrefix) },
+                                            shape = RoundedCornerShape(12.dp),
+                                            modifier = Modifier.weight(0.8f).height(38.dp),
+                                            contentPadding = PaddingValues(0.dp)
+                                        ) {
+                                            SingleLineText("Skip", style = MaterialTheme.typography.titleMedium, fontSize = 12.sp)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -2002,11 +2825,13 @@ fun DashboardV8Screen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun TransactionV8MonochromeRow(
+fun TransactionV9MonochromeRow(
     tx: TransactionEntity,
     iconName: String,
     darkTheme: Boolean,
+    onLongPressEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
     var iconTapCount by remember { mutableIntStateOf(0) }
@@ -2033,7 +2858,10 @@ fun TransactionV8MonochromeRow(
             .scale(enterScale.value)
             .clip(RoundedCornerShape(18.dp))
             .background(MaterialTheme.colorScheme.surface)
-            .bounceClick(scaleDown = 0.98f) { iconTapCount++ }
+            .combinedClickable(
+                onClick = { iconTapCount++ },
+                onLongClick = onLongPressEdit
+            )
             .padding(horizontal = Spacing.SM, vertical = Spacing.SM),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
@@ -2085,12 +2913,18 @@ fun TransactionV8MonochromeRow(
     }
 }
 
+/**
+ * V9 Ledger Screen:
+ * - Uses consistent terminology (`All | Expense | Income | Transfer`) instead of `All | Out | In | Move`!
+ * - Supports Press & Hold (`onRequestEditTx`) to edit any past transaction and Confirmation + Undo on delete.
+ */
 @Composable
-fun LedgerV8Screen(
+fun LedgerV9Screen(
     transactions: List<TransactionEntity>,
     categories: List<CategoryEntity>,
     darkTheme: Boolean,
-    onDeleteTx: (TransactionEntity) -> Unit
+    onRequestEditTx: (TransactionEntity) -> Unit,
+    onRequestDeleteTx: (TransactionEntity) -> Unit
 ) {
     var searchQuery by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf("ALL") }
@@ -2126,15 +2960,12 @@ fun LedgerV8Screen(
             )
         }
         item {
+            // Unified Terminology: All | Expense | Income | Transfer
             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.XS), modifier = Modifier.fillMaxWidth()) {
-                listOf("ALL" to "All", "EXPENSE" to "Out", "INCOME" to "In", "TRANSFER" to "Move").forEach { (key, lbl) ->
+                listOf("ALL" to "All", "EXPENSE" to "Expense", "INCOME" to "Income", "TRANSFER" to "Transfer").forEach { (key, lbl) ->
                     val isSel = selectedType == key
-                    val pillBg = if (isSel) {
-                        if (darkTheme) OttoTurquoise else SoftLavenderPill
-                    } else MaterialTheme.colorScheme.surface
-                    val pillText = if (isSel) {
-                        if (darkTheme) InkDark else SoftLavenderText
-                    } else MaterialTheme.colorScheme.onSurface
+                    val pillBg = if (isSel) OttoTurquoise else MaterialTheme.colorScheme.surface
+                    val pillText = if (isSel) InkDark else MaterialTheme.colorScheme.onSurface
 
                     Surface(
                         shape = RoundedCornerShape(12.dp),
@@ -2149,6 +2980,7 @@ fun LedgerV8Screen(
                             SingleLineText(
                                 text = lbl,
                                 style = MaterialTheme.typography.titleMedium,
+                                fontSize = 13.sp,
                                 color = pillText
                             )
                         }
@@ -2160,12 +2992,8 @@ fun LedgerV8Screen(
             LazyRow(horizontalArrangement = Arrangement.spacedBy(Spacing.XS)) {
                 items(listOf("ALL") + categories.map { it.name }) { catName ->
                     val isSel = selectedCategory == catName
-                    val pillBg = if (isSel) {
-                        if (darkTheme) OttoTurquoise else SoftLavenderPill
-                    } else MaterialTheme.colorScheme.surface
-                    val pillText = if (isSel) {
-                        if (darkTheme) InkDark else SoftLavenderText
-                    } else MaterialTheme.colorScheme.onSurface
+                    val pillBg = if (isSel) OttoTurquoise else MaterialTheme.colorScheme.surface
+                    val pillText = if (isSel) InkDark else MaterialTheme.colorScheme.onSurface
 
                     Surface(
                         shape = RoundedCornerShape(12.dp),
@@ -2207,11 +3035,12 @@ fun LedgerV8Screen(
             }
             items(dayTxs, key = { it.id }) { tx ->
                 val catObj = categories.find { it.name == tx.category }
-                TransactionV8MonochromeRow(
+                TransactionV9MonochromeRow(
                     tx = tx,
                     iconName = if (tx.type == "TRANSFER") "transfer" else (catObj?.iconName ?: "ledger"),
                     darkTheme = darkTheme,
-                    onDelete = { onDeleteTx(tx) }
+                    onLongPressEdit = { onRequestEditTx(tx) },
+                    onDelete = { onRequestDeleteTx(tx) }
                 )
             }
         }
@@ -2219,120 +3048,101 @@ fun LedgerV8Screen(
 }
 
 /**
- * Dual-Surface Wallets & PIN/Biometric Savings Vault Screen:
- * Based on Mental Accounting & Partitioning UX research, the Savings Vault lives right alongside
- * Spendable Wallets via a top segmented mode switcher (or long-press stealth gesture on "Wallets" when Stealth Mode is ON).
+ * V9 Redesigned Wallets & Savings Vault Screen:
+ * - Top of Wallets has two pills: `Available` (Spendable balance = Actual minus Vault) and `Total` (Actual balance).
+ * - Cards say `Balance • <Wallet>` (never "Spendable • <Wallet>"!).
+ * - Savings Vault is opened via a sleek Floating Button at the bottom-right of the Wallets screen!
+ * - Inside the Savings Vault, every Goal is 100% editable (rename, select icon, adjust target amount, edit wallet criteria, and adjust assigned amounts per wallet).
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun WalletsAndVaultV8Screen(
+fun WalletsAndVaultV9Screen(
     subMode: String,
-    onSwitchSubMode: (String) -> Unit,
-    isVaultStealthMode: Boolean,
+    balancePillMode: String,
+    onChangeBalancePillMode: (String) -> Unit,
+    onOpenVault: () -> Unit,
+    onBackToWallets: () -> Unit,
     darkTheme: Boolean,
     wallets: List<WalletEntity>,
-    balances: Map<String, Double>,
+    availableBalances: Map<String, Double>,
+    totalActualBalances: Map<String, Double>,
     vaultGoals: List<VaultGoalEntity>,
     vaultHoldings: Map<String, Map<String, Double>>,
     vm: OttoViewModel,
     onMoveFromWallet: (String) -> Unit,
-    onEditWalletBalance: (WalletEntity) -> Unit
+    onEditWalletBalance: (WalletEntity) -> Unit,
+    onRequestDeleteGoal: (VaultGoalEntity) -> Unit
 ) {
-    var goalToAssign by remember { mutableStateOf<VaultGoalEntity?>(null) }
-    var goalToRelease by remember { mutableStateOf<VaultGoalEntity?>(null) }
-    var showCreateGoalDialog by remember { mutableStateOf(false) }
-
-    // Compute how much money from each wallet is currently locked in the Savings Vault
-    val lockedPerWallet = remember(vaultHoldings) {
-        val map = mutableMapOf<String, Double>()
-        vaultHoldings.values.forEach { perGoalMap ->
-            perGoalMap.forEach { (wName, amt) ->
-                map[wName] = (map[wName] ?: 0.0) + amt
-            }
-        }
-        map
+    if (subMode == "vault") {
+        BackHandler { onBackToWallets() }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        // Top Header with Spendable | Savings Vault Switcher (or Stealth Long-Press on "Wallets")
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = Spacing.XS),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            SingleLineText(
-                text = if (subMode == "vault") "Savings Vault" else "Wallets",
-                style = MaterialTheme.typography.headlineLarge,
-                modifier = Modifier.pointerInput(Unit) {
-                    detectTapGestures(
-                        onLongPress = {
-                            onSwitchSubMode(if (subMode == "vault") "spendable" else "vault")
-                        }
-                    )
-                }
-            )
+    var goalToAssign by remember { mutableStateOf<VaultGoalEntity?>(null) }
+    var goalToRelease by remember { mutableStateOf<VaultGoalEntity?>(null) }
+    var goalToEditFull by remember { mutableStateOf<VaultGoalEntity?>(null) }
+    var showCreateGoalDialog by remember { mutableStateOf(false) }
 
-            if (!isVaultStealthMode || subMode == "vault") {
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .padding(3.dp),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+    val availableIcons = listOf("vault", "tech", "home", "bag", "book", "bus", "coffee", "health", "wallet", "bolt")
+
+    AnimatedContent(
+        targetState = subMode,
+        transitionSpec = { fadeIn(tween(220)).togetherWith(fadeOut(tween(160))) },
+        label = "walletsOrVault"
+    ) { mode ->
+        if (mode == "wallets") {
+            Box(modifier = Modifier.fillMaxSize()) {
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(Spacing.MD),
+                    contentPadding = PaddingValues(top = Spacing.XS, bottom = 84.dp)
                 ) {
-                    listOf("spendable" to "Spendable", "vault" to "Savings Vault").forEach { (key, lbl) ->
-                        val active = subMode == key
-                        val activeBg = if (darkTheme) OttoTurquoise else MaterialTheme.colorScheme.surface
-                        val activeText = if (darkTheme) InkDark else MaterialTheme.colorScheme.onSurface
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(11.dp))
-                                .background(if (active) activeBg else Color.Transparent)
-                                .bounceClick { onSwitchSubMode(key) }
-                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                    // Top Row: "Wallets" Title + Two Pills: Available | Total
+                    item {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
+                            SingleLineText("Wallets", style = MaterialTheme.typography.headlineLarge)
+
                             Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .padding(3.dp),
+                                horizontalArrangement = Arrangement.spacedBy(2.dp)
                             ) {
-                                if (key == "vault") {
-                                    PrecisionVectorIcon(
-                                        name = "lock",
-                                        tint = if (active) activeText else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        size = 12.dp
-                                    )
+                                listOf("AVAILABLE" to "Available", "TOTAL" to "Total").forEach { (key, label) ->
+                                    val active = balancePillMode == key
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(11.dp))
+                                            .background(if (active) OttoTurquoise else Color.Transparent)
+                                            .bounceClick { onChangeBalancePillMode(key) }
+                                            .padding(horizontal = 14.dp, vertical = 6.dp)
+                                    ) {
+                                        SingleLineText(
+                                            text = label,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontSize = 12.sp,
+                                            color = if (active) InkDark else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
                                 }
-                                SingleLineText(
-                                    text = lbl,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontSize = 12.sp,
-                                    color = if (active) activeText else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
                             }
                         }
                     }
-                }
-            }
-        }
 
-        AnimatedContent(
-            targetState = subMode,
-            transitionSpec = {
-                fadeIn(tween(220)).togetherWith(fadeOut(tween(160)))
-            },
-            label = "walletVaultSwitch"
-        ) { mode ->
-            if (mode == "spendable") {
-                LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(Spacing.MD),
-                    contentPadding = PaddingValues(vertical = Spacing.XS)
-                ) {
                     items(wallets, key = { it.id }) { wallet ->
-                        val spendableBal = balances[wallet.name] ?: 0.0
-                        val vaultLockedInThisWallet = lockedPerWallet[wallet.name] ?: 0.0
-                        val animBal by animateIntAsState(targetValue = spendableBal.roundToInt(), animationSpec = tween(450), label = "wBal")
+                        val displayedBal = if (balancePillMode == "AVAILABLE") {
+                            availableBalances[wallet.name] ?: 0.0
+                        } else {
+                            totalActualBalances[wallet.name] ?: 0.0
+                        }
+                        val animBal by animateIntAsState(
+                            targetValue = displayedBal.roundToInt(),
+                            animationSpec = tween(420),
+                            label = "wBal_${wallet.id}"
+                        )
                         val (bgBrush, isLightCard) = resolveWalletCardPalette(wallet)
                         val textColor = if (isLightCard) InkDark else Color.White
                         val subTextColor = textColor.copy(alpha = 0.78f)
@@ -2376,8 +3186,9 @@ fun WalletsAndVaultV8Screen(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
+                                    // Clean "Balance • <Wallet>" header (no awkward "Spendable" text!)
                                     SingleLineText(
-                                        text = "Spendable • ${wallet.name}",
+                                        text = "Balance • ${wallet.name}",
                                         style = MaterialTheme.typography.titleMedium,
                                         color = subTextColor,
                                         modifier = Modifier.weight(1f)
@@ -2410,13 +3221,8 @@ fun WalletsAndVaultV8Screen(
                                             Box(Modifier.size(18.dp).clip(CircleShape).background(Color(0xFFF43F5E).copy(alpha = 0.9f)))
                                             Box(Modifier.size(18.dp).offset(x = 11.dp).clip(CircleShape).background(OttoTurquoise.copy(alpha = 0.9f)))
                                         }
-                                        val tagLabel = if (!isVaultStealthMode && vaultLockedInThisWallet > 0.0) {
-                                            "${wallet.numberTag} • ৳${vaultLockedInThisWallet.roundToInt()} in Vault"
-                                        } else {
-                                            wallet.numberTag
-                                        }
                                         SingleLineText(
-                                            text = tagLabel,
+                                            text = wallet.numberTag,
                                             style = MaterialTheme.typography.labelSmall,
                                             color = subTextColor
                                         )
@@ -2449,224 +3255,259 @@ fun WalletsAndVaultV8Screen(
                         }
                     }
                 }
-            } else {
-                // SAVINGS VAULT VIEW (Protected by PIN & Biometrics, deducts from Spendable Wallets with Per-Wallet Criteria!)
-                val totalSavedAllGoals = vaultHoldings.values.sumOf { it.values.sum() }
-                val animVaultTotal by animateIntAsState(targetValue = totalSavedAllGoals.roundToInt(), animationSpec = tween(420), label = "animVaultTot")
-                val projected5Yr = (totalSavedAllGoals * 1.08.pow(5.0)).roundToInt()
 
-                LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(Spacing.MD),
-                    contentPadding = PaddingValues(vertical = Spacing.XS)
+                // FLOATING SAVINGS VAULT BUTTON AT BOTTOM-RIGHT OF WALLETS SCREEN!
+                Surface(
+                    shape = CircleShape,
+                    color = OttoTurquoise,
+                    shadowElevation = 8.dp,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(bottom = 14.dp, end = 4.dp)
+                        .bounceClick(scaleDown = 0.92f) { onOpenVault() }
                 ) {
-                    // Vault Hero Summary Card
-                    item {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(26.dp))
-                                .background(
-                                    Brush.linearGradient(
-                                        listOf(Color(0xFF0F292A), Color(0xFF0A181A), Color(0xFF081012))
-                                    )
-                                )
-                                .border(1.dp, OttoTurquoise.copy(alpha = 0.35f), RoundedCornerShape(26.dp))
-                                .padding(Spacing.LG)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp)
+                    ) {
+                        PrecisionVectorIcon("vault", InkDark, size = 20.dp)
+                        SingleLineText(
+                            text = "Vault",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = InkDark
+                        )
+                    }
+                }
+            }
+        } else {
+            // SAVINGS VAULT VIEW (Opened via the Bottom-Right Floating Button!)
+            val totalSavedAllGoals = vaultHoldings.values.sumOf { it.values.sum() }
+            val animVaultTotal by animateIntAsState(targetValue = totalSavedAllGoals.roundToInt(), animationSpec = tween(420), label = "animVaultTot")
+            val projected5Yr = (totalSavedAllGoals * 1.08.pow(5.0)).roundToInt()
+
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(Spacing.MD),
+                contentPadding = PaddingValues(vertical = Spacing.XS)
+            ) {
+                item {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.XXS)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(Spacing.XS)
                         ) {
-                            Column(verticalArrangement = Arrangement.spacedBy(Spacing.SM)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        SingleLineText(
-                                            text = "TOTAL EARMARKED IN VAULT",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = OttoTurquoise
-                                        )
-                                        Spacer(Modifier.height(4.dp))
-                                        SingleLineText(
-                                            text = "৳$animVaultTotal",
-                                            style = MaterialTheme.typography.displayLarge,
-                                            color = Color.White
-                                        )
-                                    }
-                                    Button(
-                                        onClick = { showCreateGoalDialog = true },
-                                        shape = RoundedCornerShape(14.dp),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = OttoTurquoise,
-                                            contentColor = InkDark
-                                        )
-                                    ) {
-                                        SingleLineText("+ New Goal", style = MaterialTheme.typography.titleMedium, color = InkDark)
-                                    }
-                                }
+                            IconButton(onClick = onBackToWallets, modifier = Modifier.size(32.dp)) {
+                                PrecisionVectorIcon("arrow_left", MaterialTheme.colorScheme.onSurfaceVariant, size = 18.dp)
+                            }
+                            SingleLineText("Wallets /", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            SingleLineText("Savings Vault", style = MaterialTheme.typography.titleLarge)
+                        }
+                        Button(
+                            onClick = { showCreateGoalDialog = true },
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = OttoTurquoise, contentColor = InkDark)
+                        ) {
+                            SingleLineText("+ Goal", style = MaterialTheme.typography.titleMedium, color = InkDark)
+                        }
+                    }
+                }
 
-                                Text(
-                                    text = "Subtracted from your visible spendable wallets so you never accidentally spend money saved for your goals.",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = Color.White.copy(alpha = 0.72f)
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(26.dp))
+                            .background(
+                                Brush.linearGradient(
+                                    listOf(Color(0xFF0F292A), Color(0xFF0A181A), Color(0xFF081012))
                                 )
-
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(Color.White.copy(alpha = 0.06f))
-                                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    SingleLineText("5-Year Halal Projection (8%/yr)", style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.75f))
-                                    SingleLineText("৳$projected5Yr", style = MaterialTheme.typography.titleMedium, color = OttoTurquoise)
-                                }
+                            )
+                            .border(1.dp, OttoTurquoise.copy(alpha = 0.35f), RoundedCornerShape(26.dp))
+                            .padding(Spacing.LG)
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(Spacing.SM)) {
+                            SingleLineText(
+                                text = "TOTAL ASSIGNED IN VAULT",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = OttoTurquoise
+                            )
+                            SingleLineText(
+                                text = "৳$animVaultTotal",
+                                style = MaterialTheme.typography.displayLarge,
+                                color = Color.White
+                            )
+                            Text(
+                                text = "Subtracted from your 'Available' wallet balances so you know exactly how much you can spend.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color.White.copy(alpha = 0.72f)
+                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color.White.copy(alpha = 0.06f))
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                SingleLineText("5-Year Halal Projection (8%/yr)", style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.75f))
+                                SingleLineText("৳$projected5Yr", style = MaterialTheme.typography.titleMedium, color = OttoTurquoise)
                             }
                         }
                     }
+                }
 
-                    // Vault Goals List with Wallet-Specific Criteria & Holding Breakdown
-                    items(vaultGoals, key = { it.id }) { goal ->
-                        val holdingsForGoal = vaultHoldings[goal.id] ?: emptyMap()
-                        val savedInGoal = holdingsForGoal.values.sum()
-                        val progress = (savedInGoal / goal.targetAmount.coerceAtLeast(1.0)).coerceIn(0.0, 1.0).toFloat()
-                        val animProgress by animateFloatAsState(
-                            targetValue = progress,
-                            animationSpec = spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessLow),
-                            label = "goalProg_${goal.id}"
-                        )
+                items(vaultGoals, key = { it.id }) { goal ->
+                    val holdingsForGoal = vaultHoldings[goal.id] ?: emptyMap()
+                    val savedInGoal = holdingsForGoal.values.sum()
+                    val progress = (savedInGoal / goal.targetAmount.coerceAtLeast(1.0)).coerceIn(0.0, 1.0).toFloat()
+                    val animProgress by animateFloatAsState(
+                        targetValue = progress,
+                        animationSpec = spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessLow),
+                        label = "goalProg_${goal.id}"
+                    )
 
-                        Surface(
-                            shape = RoundedCornerShape(22.dp),
-                            color = MaterialTheme.colorScheme.surface,
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                            modifier = Modifier.fillMaxWidth()
+                    Surface(
+                        shape = RoundedCornerShape(22.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(Spacing.LG),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.SM)
                         ) {
-                            Column(
-                                modifier = Modifier.padding(Spacing.LG),
-                                verticalArrangement = Arrangement.spacedBy(Spacing.SM)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(Spacing.SM),
+                                    modifier = Modifier.weight(1f)
                                 ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(Spacing.SM),
-                                        modifier = Modifier.weight(1f)
+                                    Box(
+                                        modifier = Modifier
+                                            .size(42.dp)
+                                            .clip(RoundedCornerShape(13.dp))
+                                            .background(if (darkTheme) Color(0xFF1A2829) else MonochromeBoxLight),
+                                        contentAlignment = Alignment.Center
                                     ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(42.dp)
-                                                .clip(RoundedCornerShape(13.dp))
-                                                .background(if (darkTheme) Color(0xFF1A2829) else MonochromeBoxLight),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            PrecisionVectorIcon(
-                                                name = goal.iconName,
-                                                tint = if (darkTheme) OttoTurquoise else InkDark,
-                                                size = 20.dp
-                                            )
-                                        }
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            SingleLineText(goal.title, style = MaterialTheme.typography.titleLarge)
-                                            SingleLineText(
-                                                text = "৳${savedInGoal.roundToInt()} saved of ৳${goal.targetAmount.roundToInt()} (${(progress * 100).roundToInt()}%)",
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
+                                        PrecisionVectorIcon(
+                                            name = goal.iconName,
+                                            tint = if (darkTheme) OttoTurquoise else InkDark,
+                                            size = 20.dp
+                                        )
+                                    }
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        SingleLineText(goal.title, style = MaterialTheme.typography.titleLarge)
+                                        SingleLineText(
+                                            text = "৳${savedInGoal.roundToInt()} / ৳${goal.targetAmount.roundToInt()} (${(progress * 100).roundToInt()}%)",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    // Full Edit Button for Vault Goal (Rename, Icon, Target, Criteria & Assigned Amounts!)
+                                    IconButton(
+                                        onClick = { goalToEditFull = goal },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        PrecisionVectorIcon("edit", MaterialTheme.colorScheme.onSurfaceVariant, size = 16.dp)
                                     }
                                     IconButton(
-                                        onClick = { vm.deleteVaultGoal(goal) },
-                                        modifier = Modifier.size(30.dp)
+                                        onClick = { onRequestDeleteGoal(goal) },
+                                        modifier = Modifier.size(32.dp)
                                     ) {
                                         PrecisionVectorIcon("trash", BinanceRed, size = 16.dp)
                                     }
                                 }
+                            }
 
-                                // Progress Bar
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(10.dp)
-                                        .clip(RoundedCornerShape(5.dp))
-                                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                                ) {
-                                    if (animProgress > 0f) {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxWidth(animProgress)
-                                                .fillMaxHeight()
-                                                .clip(RoundedCornerShape(5.dp))
-                                                .background(if (darkTheme) OttoTurquoise else VaultEmerald)
-                                        )
-                                    }
-                                }
-
-                                // Wallet Criteria & Source Breakdown Chips
-                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    SingleLineText(
-                                        text = "Criteria: Allowed [${goal.allowedWallets}] • Min Wallet Floor ৳${goal.minWalletFloor.roundToInt()}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(10.dp)
+                                    .clip(RoundedCornerShape(5.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                            ) {
+                                if (animProgress > 0f) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth(animProgress)
+                                            .fillMaxHeight()
+                                            .clip(RoundedCornerShape(5.dp))
+                                            .background(OttoTurquoise)
                                     )
+                                }
+                            }
 
-                                    if (holdingsForGoal.values.any { it > 0.0 }) {
-                                        FlowRow(
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                                        ) {
-                                            holdingsForGoal.filter { it.value > 0.0 }.forEach { (wName, amt) ->
-                                                Surface(
-                                                    shape = RoundedCornerShape(8.dp),
-                                                    color = MaterialTheme.colorScheme.surfaceVariant
-                                                ) {
-                                                    SingleLineText(
-                                                        text = "$wName: ৳${amt.roundToInt()} deducted",
-                                                        style = MaterialTheme.typography.labelSmall,
-                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                                    )
-                                                }
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                SingleLineText(
+                                    text = "Allowed: ${goal.allowedWallets} • Min Floor ৳${goal.minWalletFloor.roundToInt()}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+
+                                if (holdingsForGoal.values.any { it > 0.0 }) {
+                                    FlowRow(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        holdingsForGoal.filter { it.value > 0.0 }.forEach { (wName, amt) ->
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                                modifier = Modifier.bounceClick { goalToEditFull = goal }
+                                            ) {
+                                                SingleLineText(
+                                                    text = "$wName: ৳${amt.roundToInt()}",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                                )
                                             }
                                         }
                                     }
                                 }
+                            }
 
-                                // Action Buttons: + Assign Money from Wallet | Release to Wallet
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(Spacing.SM)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(Spacing.SM)
+                            ) {
+                                Button(
+                                    onClick = { goalToAssign = goal },
+                                    shape = RoundedCornerShape(14.dp),
+                                    modifier = Modifier.weight(1.3f).height(42.dp),
+                                    contentPadding = PaddingValues(0.dp)
                                 ) {
-                                    Button(
-                                        onClick = { goalToAssign = goal },
+                                    SingleLineText(
+                                        text = "+ Assign",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontSize = 13.sp,
+                                        color = MaterialTheme.colorScheme.onPrimary
+                                    )
+                                }
+
+                                if (savedInGoal > 0.0) {
+                                    OutlinedButton(
+                                        onClick = { goalToRelease = goal },
                                         shape = RoundedCornerShape(14.dp),
-                                        modifier = Modifier.weight(1.3f).height(42.dp),
+                                        modifier = Modifier.weight(1f).height(42.dp),
                                         contentPadding = PaddingValues(0.dp)
                                     ) {
                                         SingleLineText(
-                                            text = "+ Assign from Wallet",
+                                            text = "Release",
                                             style = MaterialTheme.typography.titleMedium,
-                                            fontSize = 13.sp,
-                                            color = MaterialTheme.colorScheme.onPrimary
+                                            fontSize = 13.sp
                                         )
-                                    }
-
-                                    if (savedInGoal > 0.0) {
-                                        OutlinedButton(
-                                            onClick = { goalToRelease = goal },
-                                            shape = RoundedCornerShape(14.dp),
-                                            modifier = Modifier.weight(1f).height(42.dp),
-                                            contentPadding = PaddingValues(0.dp)
-                                        ) {
-                                            SingleLineText(
-                                                text = "Release to Wallet",
-                                                style = MaterialTheme.typography.titleMedium,
-                                                fontSize = 13.sp
-                                            )
-                                        }
                                     }
                                 }
                             }
@@ -2677,7 +3518,147 @@ fun WalletsAndVaultV8Screen(
         }
     }
 
-    // Assign Money to Vault Goal Dialog (Enforces Per-Wallet Criteria & Spendable Subtraction!)
+    // FULL EDIT VAULT GOAL DIALOG (Rename, Change Icon, Target Amount, Criteria & Assigned Amounts per Wallet!)
+    goalToEditFull?.let { targetGoal ->
+        val currentHoldings = vaultHoldings[targetGoal.id] ?: emptyMap()
+        var editTitle by remember(targetGoal) { mutableStateOf(targetGoal.title) }
+        var editTarget by remember(targetGoal) { mutableStateOf(targetGoal.targetAmount.roundToInt().toString()) }
+        var editFloor by remember(targetGoal) { mutableStateOf(targetGoal.minWalletFloor.roundToInt().toString()) }
+        var editIcon by remember(targetGoal) { mutableStateOf(targetGoal.iconName) }
+        val allowedSet = remember(targetGoal) {
+            mutableStateListOf<String>().apply {
+                addAll(targetGoal.allowedWallets.split(",").map { it.trim() }.filter { it.isNotEmpty() })
+            }
+        }
+        val editableHoldingsMap = remember(targetGoal, wallets) {
+            mutableStateMapOf<String, String>().apply {
+                wallets.forEach { w ->
+                    put(w.name, (currentHoldings[w.name] ?: 0.0).roundToInt().toString())
+                }
+            }
+        }
+
+        AlertDialog(
+            onDismissRequest = { goalToEditFull = null },
+            containerColor = MaterialTheme.colorScheme.surface,
+            title = { SingleLineText("Edit Vault Goal", style = MaterialTheme.typography.titleLarge) },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.SM)
+                ) {
+                    OutlinedTextField(
+                        value = editTitle,
+                        onValueChange = { editTitle = it },
+                        label = { SingleLineText("Goal Name") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    SingleLineText("Icon", style = MaterialTheme.typography.labelSmall)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(availableIcons) { ic ->
+                            val isSel = editIcon == ic
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (isSel) OttoTurquoise else MaterialTheme.colorScheme.surfaceVariant)
+                                    .bounceClick { editIcon = ic },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                PrecisionVectorIcon(
+                                    name = ic,
+                                    tint = if (isSel) InkDark else MaterialTheme.colorScheme.onSurface,
+                                    size = 18.dp
+                                )
+                            }
+                        }
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.XS)) {
+                        OutlinedTextField(
+                            value = editTarget,
+                            onValueChange = { editTarget = it },
+                            label = { SingleLineText("Target (৳)") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = editFloor,
+                            onValueChange = { editFloor = it },
+                            label = { SingleLineText("Min Floor (৳)") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    SingleLineText("Allowed Wallets Criteria", style = MaterialTheme.typography.labelSmall)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(wallets.map { it.name }) { wName ->
+                            val isSel = wName in allowedSet
+                            WalletChoicePill(
+                                label = wName,
+                                selected = isSel,
+                                darkTheme = darkTheme,
+                                onClick = {
+                                    if (isSel && allowedSet.size > 1) allowedSet.remove(wName)
+                                    else if (!isSel) allowedSet.add(wName)
+                                }
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                    SingleLineText("Assigned Amounts per Wallet (৳)", style = MaterialTheme.typography.titleMedium)
+                    wallets.forEach { w ->
+                        OutlinedTextField(
+                            value = editableHoldingsMap[w.name] ?: "0",
+                            onValueChange = { editableHoldingsMap[w.name] = it },
+                            label = { SingleLineText("Assigned from ${w.name} (৳)") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val parsedHoldings = editableHoldingsMap.mapValues { (_, v) ->
+                            (v.toDoubleOrNull() ?: 0.0).coerceAtLeast(0.0)
+                        }
+                        vm.updateVaultGoalAndHoldings(
+                            goal = targetGoal,
+                            newTitle = editTitle,
+                            newTargetAmount = editTarget.toDoubleOrNull() ?: targetGoal.targetAmount,
+                            newIconName = editIcon,
+                            newAllowedWallets = allowedSet.joinToString(","),
+                            newMinFloor = editFloor.toDoubleOrNull() ?: targetGoal.minWalletFloor,
+                            updatedWalletHoldings = parsedHoldings
+                        )
+                        goalToEditFull = null
+                    },
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    SingleLineText("Save", color = MaterialTheme.colorScheme.onPrimary)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { goalToEditFull = null }) {
+                    SingleLineText("Cancel")
+                }
+            }
+        )
+    }
+
     goalToAssign?.let { targetGoal ->
         val allowedNames = remember(targetGoal, wallets) {
             val configured = targetGoal.allowedWallets.split(",").map { it.trim() }.filter { it.isNotEmpty() }
@@ -2688,8 +3669,8 @@ fun WalletsAndVaultV8Screen(
         var assignAmountText by remember { mutableStateOf("") }
         var criteriaError by remember { mutableStateOf<String?>(null) }
 
-        val currentSpendable = balances[selectedWallet] ?: 0.0
-        val maxSafeAssignable = (currentSpendable - targetGoal.minWalletFloor).coerceAtLeast(0.0)
+        val currentAvail = availableBalances[selectedWallet] ?: 0.0
+        val maxSafeAssignable = (currentAvail - targetGoal.minWalletFloor).coerceAtLeast(0.0)
 
         AlertDialog(
             onDismissRequest = { goalToAssign = null },
@@ -2697,30 +3678,21 @@ fun WalletsAndVaultV8Screen(
             title = { SingleLineText("Assign to ${targetGoal.title}", style = MaterialTheme.typography.titleLarge) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(Spacing.SM)) {
-                    Text(
-                        text = "Select an eligible wallet. The assigned amount will be subtracted from your visible spendable wallet balance immediately.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    SingleLineText("Eligible Wallets (Goal Criteria)", style = MaterialTheme.typography.labelSmall)
+                    SingleLineText("Eligible Wallets", style = MaterialTheme.typography.labelSmall)
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         items(allowedNames) { wName ->
-                            val avail = balances[wName] ?: 0.0
+                            val avail = availableBalances[wName] ?: 0.0
                             WalletChoicePill(
                                 label = "$wName (৳${avail.roundToInt()})",
                                 selected = selectedWallet == wName,
                                 darkTheme = darkTheme,
-                                onClick = {
-                                    selectedWallet = wName
-                                    criteriaError = null
-                                }
+                                onClick = { selectedWallet = wName; criteriaError = null }
                             )
                         }
                     }
 
                     SingleLineText(
-                        text = "Min Spendable Floor: ৳${targetGoal.minWalletFloor.roundToInt()} • Safe to assign: ৳${maxSafeAssignable.roundToInt()}",
+                        text = "Min Floor: ৳${targetGoal.minWalletFloor.roundToInt()} • Max Assignable: ৳${maxSafeAssignable.roundToInt()}",
                         style = MaterialTheme.typography.labelSmall,
                         color = if (darkTheme) OttoTurquoise else OttoTurquoiseDeep
                     )
@@ -2728,12 +3700,9 @@ fun WalletsAndVaultV8Screen(
                     OutlinedTextField(
                         value = assignAmountText,
                         onValueChange = { assignAmountText = it; criteriaError = null },
-                        label = { SingleLineText("Amount to Assign (৳)") },
+                        label = { SingleLineText("Amount (৳)") },
                         singleLine = true,
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Decimal,
-                            imeAction = ImeAction.Done
-                        ),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -2747,27 +3716,20 @@ fun WalletsAndVaultV8Screen(
                 Button(
                     onClick = {
                         val amt = assignAmountText.toDoubleOrNull() ?: 0.0
-                        val err = vm.assignMoneyToVaultGoal(targetGoal, selectedWallet, amt, balances)
-                        if (err != null) {
-                            criteriaError = err
-                        } else {
-                            goalToAssign = null
-                        }
+                        val err = vm.assignMoneyToVaultGoal(targetGoal, selectedWallet, amt, availableBalances)
+                        if (err != null) criteriaError = err else goalToAssign = null
                     },
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    SingleLineText("Assign & Subtract", color = MaterialTheme.colorScheme.onPrimary)
+                    SingleLineText("Save", color = MaterialTheme.colorScheme.onPrimary)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { goalToAssign = null }) {
-                    SingleLineText("Cancel")
-                }
+                TextButton(onClick = { goalToAssign = null }) { SingleLineText("Cancel") }
             }
         )
     }
 
-    // Release Money Back to Spendable Wallet Dialog
     goalToRelease?.let { targetGoal ->
         val holdingsForGoal = vaultHoldings[targetGoal.id] ?: emptyMap()
         val nonZeroWallets = holdingsForGoal.filter { it.value > 0.0 }.keys.toList()
@@ -2782,16 +3744,11 @@ fun WalletsAndVaultV8Screen(
             title = { SingleLineText("Release from ${targetGoal.title}", style = MaterialTheme.typography.titleLarge) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(Spacing.SM)) {
-                    Text(
-                        text = "Return earmarked funds back to your spendable wallet balance.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         items(nonZeroWallets) { wName ->
                             val held = holdingsForGoal[wName] ?: 0.0
                             WalletChoicePill(
-                                label = "$wName (৳${held.roundToInt()} held)",
+                                label = "$wName (৳${held.roundToInt()})",
                                 selected = selectedWallet == wName,
                                 darkTheme = darkTheme,
                                 onClick = { selectedWallet = wName; releaseError = null }
@@ -2803,10 +3760,7 @@ fun WalletsAndVaultV8Screen(
                         onValueChange = { releaseAmountText = it; releaseError = null },
                         label = { SingleLineText("Amount to Release (৳)") },
                         singleLine = true,
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Decimal,
-                            imeAction = ImeAction.Done
-                        ),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -2820,30 +3774,24 @@ fun WalletsAndVaultV8Screen(
                     onClick = {
                         val amt = releaseAmountText.toDoubleOrNull() ?: 0.0
                         val err = vm.releaseMoneyFromVaultGoal(targetGoal, selectedWallet, amt, holdingsForGoal)
-                        if (err != null) {
-                            releaseError = err
-                        } else {
-                            goalToRelease = null
-                        }
+                        if (err != null) releaseError = err else goalToRelease = null
                     },
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    SingleLineText("Release to Wallet", color = MaterialTheme.colorScheme.onPrimary)
+                    SingleLineText("Release", color = MaterialTheme.colorScheme.onPrimary)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { goalToRelease = null }) {
-                    SingleLineText("Cancel")
-                }
+                TextButton(onClick = { goalToRelease = null }) { SingleLineText("Cancel") }
             }
         )
     }
 
-    // Create New Savings Vault Goal with Wallet Criteria Dialog
     if (showCreateGoalDialog) {
         var titleInput by remember { mutableStateOf("") }
         var targetInput by remember { mutableStateOf("") }
         var floorInput by remember { mutableStateOf("500") }
+        var chosenIcon by remember { mutableStateOf("vault") }
         val nonTransitWallets = remember(wallets) {
             wallets.map { it.name }.filter { !it.lowercase().contains("transit") && !it.lowercase().contains("rapid") }
         }
@@ -2858,32 +3806,46 @@ fun WalletsAndVaultV8Screen(
                     OutlinedTextField(
                         value = titleInput,
                         onValueChange = { titleInput = it },
-                        label = { SingleLineText("Goal Name (e.g. New iPhone, Parents Gift)") },
+                        label = { SingleLineText("Goal Name (e.g. New iPhone, Gift)") },
                         singleLine = true,
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
+                    SingleLineText("Select Icon", style = MaterialTheme.typography.labelSmall)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(availableIcons) { ic ->
+                            val isSel = chosenIcon == ic
+                            Box(
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (isSel) OttoTurquoise else MaterialTheme.colorScheme.surfaceVariant)
+                                    .bounceClick { chosenIcon = ic },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                PrecisionVectorIcon(
+                                    name = ic,
+                                    tint = if (isSel) InkDark else MaterialTheme.colorScheme.onSurface,
+                                    size = 16.dp
+                                )
+                            }
+                        }
+                    }
                     OutlinedTextField(
                         value = targetInput,
                         onValueChange = { targetInput = it },
                         label = { SingleLineText("Target Amount (৳)") },
                         singleLine = true,
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Decimal,
-                            imeAction = ImeAction.Next
-                        ),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Next),
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
                         value = floorInput,
                         onValueChange = { floorInput = it },
-                        label = { SingleLineText("Min Wallet Spendable Floor Criteria (৳)") },
+                        label = { SingleLineText("Min Wallet Floor Criteria (৳)") },
                         singleLine = true,
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Decimal,
-                            imeAction = ImeAction.Done
-                        ),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -2912,42 +3874,31 @@ fun WalletsAndVaultV8Screen(
                             targetAmount = targetInput.toDoubleOrNull() ?: 10000.0,
                             allowedWallets = selectedAllowed.joinToString(","),
                             minWalletFloor = floorInput.toDoubleOrNull() ?: 0.0,
-                            iconName = "vault"
+                            iconName = chosenIcon
                         )
                         showCreateGoalDialog = false
                     },
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    SingleLineText("Create Goal", color = MaterialTheme.colorScheme.onPrimary)
+                    SingleLineText("Save", color = MaterialTheme.colorScheme.onPrimary)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showCreateGoalDialog = false }) {
-                    SingleLineText("Cancel")
-                }
+                TextButton(onClick = { showCreateGoalDialog = false }) { SingleLineText("Cancel") }
             }
         )
     }
 }
 
-/**
- * V8 Settings Hub with Dedicated Sub-Screens:
- * 1. Profile & Wallets (Includes Monthly Cap ON/OFF Toggle!)
- * 2. Recurring Bills & Income (Confirmation-based scheduled expenses & income with notifications!)
- * 3. Smart SMS & Alert Parser (Opt-in 100% offline bKash/Nagad/Rocket/Bank parser + Simulator!)
- * 4. Security & Vault Lock (iOS Passcode, Biometrics, Vault Lock & Stealth Mode toggles!)
- * 5. Categories & Magic Words
- * 6. Backup & Cloud Sync
- * 7. FAQ & Guide
- */
 @Composable
-fun SettingsHubV8Screen(
+fun SettingsHubV9Screen(
     subScreen: String,
     onNavigateSubScreen: (String) -> Unit,
     vm: OttoViewModel,
     activity: FragmentActivity,
     balances: Map<String, Double>,
-    onEditWalletBalance: (WalletEntity) -> Unit
+    onEditWalletBalance: (WalletEntity) -> Unit,
+    onAskDeleteConfirmation: (String, String, () -> Unit) -> Unit
 ) {
     if (subScreen != "menu") {
         BackHandler { onNavigateSubScreen("menu") }
@@ -2955,24 +3906,31 @@ fun SettingsHubV8Screen(
 
     AnimatedContent(
         targetState = subScreen,
-        transitionSpec = {
-            fadeIn(tween(200)).togetherWith(fadeOut(tween(150)))
-        },
+        transitionSpec = { fadeIn(tween(200)).togetherWith(fadeOut(tween(150))) },
         label = "settingsSubTransition"
     ) { targetSub ->
         when (targetSub) {
             "backup" -> BackupAndCloudSyncSubScreen(vm = vm, onBack = { onNavigateSubScreen("menu") })
-            "magic_words" -> CategoriesAndMagicWordsSubScreen(vm = vm, onBack = { onNavigateSubScreen("menu") })
+            "magic_words" -> CategoriesAndMagicWordsSubScreen(
+                vm = vm,
+                onBack = { onNavigateSubScreen("menu") },
+                onAskDeleteConfirmation = onAskDeleteConfirmation
+            )
             "profile" -> ProfileAndWalletsSubScreen(
                 vm = vm,
                 balances = balances,
                 onEditWalletBalance = onEditWalletBalance,
-                onBack = { onNavigateSubScreen("menu") }
+                onBack = { onNavigateSubScreen("menu") },
+                onAskDeleteConfirmation = onAskDeleteConfirmation
             )
             "security" -> SecurityAndLockSubScreen(vm = vm, activity = activity, onBack = { onNavigateSubScreen("menu") })
-            "recurring" -> RecurringRulesSubScreen(vm = vm, onBack = { onNavigateSubScreen("menu") })
+            "scheduler" -> SchedulerSubScreen(
+                vm = vm,
+                onBack = { onNavigateSubScreen("menu") },
+                onAskDeleteConfirmation = onAskDeleteConfirmation
+            )
             "sms_parser" -> SmartSmsParserSubScreen(vm = vm, onBack = { onNavigateSubScreen("menu") })
-            "faq" -> FaqAndHelpSubScreen(onBack = { onNavigateSubScreen("menu") })
+            "faq" -> FaqAndHelpSubScreen(vm = vm, onBack = { onNavigateSubScreen("menu") })
             else -> {
                 val rules by vm.keywordRules.collectAsState()
                 val categories by vm.categories.collectAsState()
@@ -3004,9 +3962,9 @@ fun SettingsHubV8Screen(
                     item {
                         SettingsNavCard(
                             iconName = "calendar",
-                            title = "Recurring Bills & Income",
-                            subtitle = "${recurringRules.size} scheduled • Confirms on due date with notification",
-                            onClick = { onNavigateSubScreen("recurring") }
+                            title = "Scheduler",
+                            subtitle = "${recurringRules.size} scheduled Expense & Income rules • Confirms on due date",
+                            onClick = { onNavigateSubScreen("scheduler") }
                         )
                     }
 
@@ -3022,7 +3980,7 @@ fun SettingsHubV8Screen(
                     item {
                         SettingsNavCard(
                             iconName = "lock",
-                            title = "Security & Savings Vault Lock",
+                            title = "Security & Vault Lock",
                             subtitle = "App PIN ${if (isPinOn) "ON" else "OFF"} • Vault Lock ${if (isVaultLockOn) "ON" else "OFF"}",
                             onClick = { onNavigateSubScreen("security") }
                         )
@@ -3049,8 +4007,8 @@ fun SettingsHubV8Screen(
                     item {
                         SettingsNavCard(
                             iconName = "help",
-                            title = "FAQ & Guide",
-                            subtitle = "Monthly Cap, Savings Vault, Recurring & SMS Parser",
+                            title = "FAQ, Guide & App Tour",
+                            subtitle = "Monthly Cap, Savings Vault, Scheduler & Replay Tour",
                             onClick = { onNavigateSubScreen("faq") }
                         )
                     }
@@ -3090,12 +4048,12 @@ fun SettingsNavCard(
                     modifier = Modifier
                         .size(44.dp)
                         .clip(RoundedCornerShape(14.dp))
-                        .background(if (darkTheme) Color(0xFF1F2733) else MaterialTheme.colorScheme.surfaceVariant),
+                        .background(if (darkTheme) Color(0xFF1F2733) else OttoTurquoiseSoftLight),
                     contentAlignment = Alignment.Center
                 ) {
                     PrecisionVectorIcon(
                         name = iconName,
-                        tint = if (darkTheme) OttoTurquoise else MaterialTheme.colorScheme.onSurface,
+                        tint = if (darkTheme) OttoTurquoise else OttoTurquoiseDeep,
                         size = 20.dp
                     )
                 }
@@ -3111,23 +4069,21 @@ fun SettingsNavCard(
 }
 
 /**
- * Settings / Recurring Bills & Income Sub-Screen:
- * - Toggle the entire Recurring feature ON/OFF.
- * - Schedule recurring Expenses (e.g. House Rent, WiFi) or Income (e.g. Salary, Tuition) on a specific Day of Month (1..31)
- *   and Notification Time (HH:MM).
- * - Never modifies wallet balance until confirmed by the user on the due date!
+ * Dedicated Settings / Scheduler Sub-Screen:
+ * - Configures all details for recurring Expenses and Income (Title, Type, Amount, Wallet, Category, Day of Month, Notification Time).
+ * - Deletion requires confirmation and triggers an Undo snackbar!
  */
 @Composable
-fun RecurringRulesSubScreen(
+fun SchedulerSubScreen(
     vm: OttoViewModel,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onAskDeleteConfirmation: (String, String, () -> Unit) -> Unit
 ) {
     val recurringEnabled by vm.isRecurringEnabled.collectAsState()
     val rules by vm.recurringRules.collectAsState()
     val wallets by vm.wallets.collectAsState()
     val categories by vm.categories.collectAsState()
     val darkTheme by vm.isDarkTheme.collectAsState()
-    val context = LocalContext.current
 
     val notifPermLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -3158,11 +4114,10 @@ fun RecurringRulesSubScreen(
                     PrecisionVectorIcon("arrow_left", MaterialTheme.colorScheme.onSurfaceVariant, size = 18.dp)
                 }
                 SingleLineText("Settings /", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                SingleLineText("Recurring Bills & Income", style = MaterialTheme.typography.titleLarge)
+                SingleLineText("Scheduler", style = MaterialTheme.typography.titleLarge)
             }
         }
 
-        // Global Toggle Card
         item {
             Surface(
                 shape = RoundedCornerShape(22.dp),
@@ -3170,30 +4125,27 @@ fun RecurringRulesSubScreen(
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.padding(Spacing.LG), verticalArrangement = Arrangement.spacedBy(Spacing.XS)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            SingleLineText("Recurring Confirmations & Alerts", style = MaterialTheme.typography.titleLarge)
-                            Text(
-                                "Balances are never added or subtracted until you confirm on the due date.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = recurringEnabled,
-                            onCheckedChange = { vm.toggleRecurringFeature(it) }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(Spacing.LG),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        SingleLineText("Enable Scheduler & Reminders", style = MaterialTheme.typography.titleLarge)
+                        Text(
+                            "Balances update only after you confirm on the due date via the Home notification button.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                    Switch(
+                        checked = recurringEnabled,
+                        onCheckedChange = { vm.toggleRecurringFeature(it) }
+                    )
                 }
             }
         }
 
-        // Add New Recurring Rule Card
         item {
             Surface(
                 shape = RoundedCornerShape(22.dp),
@@ -3202,10 +4154,10 @@ fun RecurringRulesSubScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(Spacing.LG), verticalArrangement = Arrangement.spacedBy(Spacing.SM)) {
-                    SingleLineText("Schedule Recurring Expense or Income", style = MaterialTheme.typography.titleLarge)
+                    SingleLineText("Add Scheduled Expense or Income", style = MaterialTheme.typography.titleLarge)
 
                     Row(horizontalArrangement = Arrangement.spacedBy(Spacing.XS), modifier = Modifier.fillMaxWidth()) {
-                        listOf("EXPENSE" to "Recurring Expense", "INCOME" to "Recurring Income").forEach { (k, lbl) ->
+                        listOf("EXPENSE" to "Expense", "INCOME" to "Income").forEach { (k, lbl) ->
                             WalletChoicePill(
                                 label = lbl,
                                 selected = type == k,
@@ -3222,7 +4174,7 @@ fun RecurringRulesSubScreen(
                         OutlinedTextField(
                             value = title,
                             onValueChange = { title = it },
-                            label = { SingleLineText("Title (e.g. House Rent, Tuition)") },
+                            label = { SingleLineText("Title (e.g. Rent, Tuition)") },
                             singleLine = true,
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.weight(1.3f)
@@ -3238,7 +4190,7 @@ fun RecurringRulesSubScreen(
                         )
                     }
 
-                    SingleLineText("Target Wallet", style = MaterialTheme.typography.labelSmall)
+                    SingleLineText("Wallet", style = MaterialTheme.typography.labelSmall)
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         items(wallets) { w ->
                             WalletChoicePill(
@@ -3312,13 +4264,12 @@ fun RecurringRulesSubScreen(
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.fillMaxWidth().height(48.dp)
                     ) {
-                        SingleLineText("Add Scheduled Rule", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onPrimary)
+                        SingleLineText("Save", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onPrimary)
                     }
                 }
             }
         }
 
-        // Existing Recurring Rules List
         items(rules, key = { it.id }) { rule ->
             Surface(
                 shape = RoundedCornerShape(18.dp),
@@ -3348,7 +4299,16 @@ fun RecurringRulesSubScreen(
                             checked = rule.enabled,
                             onCheckedChange = { vm.toggleRecurringRuleItem(rule, it) }
                         )
-                        IconButton(onClick = { vm.deleteRecurringRule(rule) }, modifier = Modifier.size(32.dp)) {
+                        IconButton(
+                            onClick = {
+                                onAskDeleteConfirmation(
+                                    "Delete Scheduled Item?",
+                                    "Delete '${rule.title}' (৳${rule.amount.roundToInt()})?",
+                                    { vm.deleteRecurringRuleWithUndo(rule) }
+                                )
+                            },
+                            modifier = Modifier.size(32.dp)
+                        ) {
                             PrecisionVectorIcon("trash", BinanceRed, size = 16.dp)
                         }
                     }
@@ -3358,11 +4318,6 @@ fun RecurringRulesSubScreen(
     }
 }
 
-/**
- * Settings / Smart SMS & Alert Parser Sub-Screen:
- * - Opt-in 100% offline regex parser for bKash, Nagad, Rocket, and Bangladeshi Bank alerts.
- * - Includes 1-tap permission buttons + Live Alert Simulator so the user can test 1-tap Home confirmations immediately!
- */
 @Composable
 fun SmartSmsParserSubScreen(
     vm: OttoViewModel,
@@ -3414,7 +4369,7 @@ fun SmartSmsParserSubScreen(
                         Column(modifier = Modifier.weight(1f)) {
                             SingleLineText("On-Device MFS & Bank Alert Parser", style = MaterialTheme.typography.titleLarge)
                             Text(
-                                "100% offline regex parser for bKash, Nagad, Rocket & BD Bank alerts. Pops up a 1-tap confirmation pill on your Home screen.",
+                                "100% offline parser for bKash, Nagad, Rocket & BD Bank alerts. Shows a floating notification button at the bottom-right of Home when an alert arrives.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -3434,20 +4389,14 @@ fun SmartSmsParserSubScreen(
 
                     Row(horizontalArrangement = Arrangement.spacedBy(Spacing.SM), modifier = Modifier.fillMaxWidth()) {
                         OutlinedButton(
-                            onClick = {
-                                runCatching { smsPermissionLauncher.launch(Manifest.permission.RECEIVE_SMS) }
-                            },
+                            onClick = { runCatching { smsPermissionLauncher.launch(Manifest.permission.RECEIVE_SMS) } },
                             shape = RoundedCornerShape(14.dp),
                             modifier = Modifier.weight(1f).height(44.dp)
                         ) {
                             SingleLineText("Grant SMS Access", style = MaterialTheme.typography.titleMedium, fontSize = 12.sp)
                         }
                         OutlinedButton(
-                            onClick = {
-                                runCatching {
-                                    context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                                }
-                            },
+                            onClick = { runCatching { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) } },
                             shape = RoundedCornerShape(14.dp),
                             modifier = Modifier.weight(1f).height(44.dp)
                         ) {
@@ -3474,7 +4423,7 @@ fun SmartSmsParserSubScreen(
                             shape = RoundedCornerShape(14.dp),
                             modifier = Modifier.weight(1f).height(46.dp)
                         ) {
-                            SingleLineText("Parse & Show on Home", style = MaterialTheme.typography.titleMedium, fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimary)
+                            SingleLineText("Simulate bKash Alert", style = MaterialTheme.typography.titleMedium, fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimary)
                         }
                         OutlinedButton(
                             onClick = {
@@ -3484,7 +4433,7 @@ fun SmartSmsParserSubScreen(
                             shape = RoundedCornerShape(14.dp),
                             modifier = Modifier.weight(0.9f).height(46.dp)
                         ) {
-                            SingleLineText("Test Nagad In", style = MaterialTheme.typography.titleMedium, fontSize = 12.sp)
+                            SingleLineText("Simulate Nagad", style = MaterialTheme.typography.titleMedium, fontSize = 12.sp)
                         }
                     }
                 }
@@ -3493,9 +4442,6 @@ fun SmartSmsParserSubScreen(
     }
 }
 
-/**
- * Settings / Security & Savings Vault Lock Sub-Screen.
- */
 @Composable
 fun SecurityAndLockSubScreen(
     vm: OttoViewModel,
@@ -3505,7 +4451,6 @@ fun SecurityAndLockSubScreen(
     val isPinEnabled by vm.isPinLockEnabled.collectAsState()
     val isBioEnabled by vm.isBiometricEnabled.collectAsState()
     val isVaultLockOn by vm.isVaultLockEnabled.collectAsState()
-    val isVaultStealthOn by vm.isVaultStealthMode.collectAsState()
     var showPinSetupDialog by remember { mutableStateOf(false) }
 
     LazyColumn(
@@ -3568,9 +4513,9 @@ fun SecurityAndLockSubScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            SingleLineText("Biometric Unlock (Fingerprint / Face)", style = MaterialTheme.typography.titleMedium)
+                            SingleLineText("Biometric Unlock (Bottom-Right Sensor)", style = MaterialTheme.typography.titleMedium)
                             SingleLineText(
-                                "Use device biometric sensor alongside PIN",
+                                "Use fingerprint or face unlock alongside PIN",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -3607,7 +4552,7 @@ fun SecurityAndLockSubScreen(
                         Column(modifier = Modifier.weight(1f)) {
                             SingleLineText("Lock Savings Vault with PIN / Biometrics", style = MaterialTheme.typography.titleMedium)
                             SingleLineText(
-                                "Require authentication before opening the Savings Vault",
+                                "Require authentication when tapping the floating Vault button on Wallets",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -3615,25 +4560,6 @@ fun SecurityAndLockSubScreen(
                         Switch(
                             checked = isVaultLockOn,
                             onCheckedChange = { vm.toggleVaultLock(it) }
-                        )
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            SingleLineText("Stealth Hide Vault Buttons", style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                "Hides Vault buttons from Home & Wallets. Access Vault by long-pressing the Total Balance card or 'Wallets' header.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = isVaultStealthOn,
-                            onCheckedChange = { vm.toggleVaultStealth(it) }
                         )
                     }
 
@@ -3722,13 +4648,11 @@ fun SecurityAndLockSubScreen(
                     },
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    SingleLineText("Enable Lock", color = MaterialTheme.colorScheme.onPrimary)
+                    SingleLineText("Save", color = MaterialTheme.colorScheme.onPrimary)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showPinSetupDialog = false }) {
-                    SingleLineText("Cancel")
-                }
+                TextButton(onClick = { showPinSetupDialog = false }) { SingleLineText("Cancel") }
             }
         )
     }
@@ -3737,32 +4661,31 @@ fun SecurityAndLockSubScreen(
 data class FaqItem(val question: String, val answer: String)
 
 @Composable
-fun FaqAndHelpSubScreen(onBack: () -> Unit) {
+fun FaqAndHelpSubScreen(
+    vm: OttoViewModel,
+    onBack: () -> Unit
+) {
     val faqs = remember {
         listOf(
             FaqItem(
                 question = "What is the Monthly Cap, and can I toggle it off?",
-                answer = "Your Monthly Cap is your target monthly spending ceiling. On the Home screen, 'Spent ৳X / ৳Monthly Cap' fills the progress bar as you log expenses. You can toggle the Monthly Cap ON or OFF anytime in Settings → Profile, Wallets & Monthly Cap."
+                answer = "Your Monthly Cap is your target monthly spending ceiling. On the Home screen, 'Expense ৳X / ৳Monthly Cap' fills the progress bar as you log expenses. You can toggle the Monthly Cap ON or OFF anytime in Settings → Profile, Wallets & Monthly Cap."
             ),
             FaqItem(
-                question = "Where is the Savings Vault located, and how does it subtract from my wallets?",
-                answer = "Based on Mental Accounting psychology, the Savings Vault lives inside the Wallets tab ('Spendable | Savings Vault' toggle at the top) or via long-pressing the Home Spendable Balance card. When you assign money from Cash, bKash, or Bank Card to a goal (like 'New Phone' or 'Gift for Parents'), that amount is immediately subtracted from your visible Spendable Wallet balance so you never accidentally spend it—without inflating your Monthly Expense Cap."
+                question = "How do 'Available' vs. 'Total' pills and the Floating Vault Button on Wallets work?",
+                answer = "At the top of the Wallets screen, 'Available' shows your spendable balance after subtracting any money assigned to your Savings Vault, while 'Total' shows the full actual balance physically sitting in the wallet. Tap the floating 'Vault' button at the bottom-right of Wallets to open your PIN/Biometric Savings Vault and edit or assign goals."
             ),
             FaqItem(
-                question = "How do Confirmation-Based Recurring Bills & Income work?",
-                answer = "In Settings → Recurring Bills & Income, you can schedule recurring expenses (e.g. House Rent) or income (e.g. Tuition, Salary) for a specific day of the month and notification time. OttoBudget never deducts or adds money automatically—on the due date, a notification fires and a confirmation card appears on the Home screen waiting for your 1-tap approval."
+                question = "How do I edit a past transaction or undo an accidental delete?",
+                answer = "Press and hold (long-press) any transaction in Recent Transactions or Ledger to open the Edit Transaction dialog where you can change its Type, Amount, Date, Description, Category, or Wallet. Whenever you delete an item, a confirmation popup prevents mistakes, and an 'Undo' snackbar lets you restore it immediately."
             ),
             FaqItem(
-                question = "How does the On-Device SMS / Notification Auto-Parser work?",
-                answer = "When enabled in Settings → Smart SMS & Alert Parser, OttoBudget uses 100% offline regex rules to detect incoming bKash, Nagad, Rocket, and Bangladeshi Bank transaction alerts and pops up a 1-tap 'Log ৳250 from bKash?' confirmation pill on your Home screen."
+                question = "Where do new SMS Alerts and Scheduler Confirmations appear?",
+                answer = "To keep your Home screen clean, OttoBudget only displays a floating Notification button at the bottom-right of the Home screen when a new bKash/Nagad/Rocket/Bank SMS alert or due Scheduler item is waiting for your confirmation."
             ),
             FaqItem(
-                question = "How do I log an expense or income for a past date I forgot?",
-                answer = "In the Quick-Add sheet ('+'), use the Date row to tap 'Yesterday', '2 Days Ago', or 'Pick Date' to open the calendar picker and record the transaction on any past date."
-            ),
-            FaqItem(
-                question = "How does Zero-Schema Encrypted Cloud Sync protect my data?",
-                answer = "OttoBudget encrypts your wallets, categories, vault goals, recurring rules, and transactions locally with AES-256-GCM into a single encrypted vault ('otto_vault/vault.enc') and uploads it to an auto-provisioned private Supabase Storage bucket—requiring zero SQL schema scripts."
+                question = "How can onboarding data be received without using a database?",
+                answer = "In Settings → Backup & Cloud Sync, you can paste a stateless Webhook URL (such as a 5-line Google Apps Script Web App attached to a Google Sheet, a Google Forms endpoint, a Discord Webhook URL, or a Telegram Bot webhook). OttoBudget sends the onboarding JSON directly to that webhook with zero database server required."
             )
         )
     }
@@ -3776,28 +4699,40 @@ fun FaqAndHelpSubScreen(onBack: () -> Unit) {
         item {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Spacing.XS),
+                horizontalArrangement = Arrangement.SpaceBetween,
                 modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.XXS)
             ) {
-                IconButton(onClick = onBack, modifier = Modifier.size(32.dp)) {
-                    PrecisionVectorIcon("arrow_left", MaterialTheme.colorScheme.onSurfaceVariant, size = 18.dp)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.XS)
+                ) {
+                    IconButton(onClick = onBack, modifier = Modifier.size(32.dp)) {
+                        PrecisionVectorIcon("arrow_left", MaterialTheme.colorScheme.onSurfaceVariant, size = 18.dp)
+                    }
+                    SingleLineText("Settings /", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    SingleLineText("FAQ & Guide", style = MaterialTheme.typography.titleLarge)
                 }
-                SingleLineText("Settings /", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                SingleLineText("FAQ & Guide", style = MaterialTheme.typography.titleLarge)
+
+                Button(
+                    onClick = { vm.replaySpotlightTour() },
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    SingleLineText("Replay Tour", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimary)
+                }
             }
         }
 
         items(faqs.size) { idx ->
             val item = faqs[idx]
             val isOpen = expandedIndex == idx
-            val darkTheme = MaterialTheme.colorScheme.background == BinanceDarkBg
 
             Surface(
                 shape = RoundedCornerShape(20.dp),
                 color = MaterialTheme.colorScheme.surface,
                 border = BorderStroke(
                     width = 1.dp,
-                    color = if (isOpen && darkTheme) OttoTurquoise.copy(alpha = 0.55f) else MaterialTheme.colorScheme.outline
+                    color = if (isOpen) OttoTurquoise else MaterialTheme.colorScheme.outline
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
@@ -3817,17 +4752,13 @@ fun FaqAndHelpSubScreen(onBack: () -> Unit) {
                         Text(
                             text = item.question,
                             style = MaterialTheme.typography.titleMedium,
-                            color = if (isOpen && darkTheme) OttoTurquoise else MaterialTheme.colorScheme.onSurface,
+                            color = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.weight(1f).padding(end = Spacing.SM)
                         )
-                        Box(
-                            modifier = Modifier.graphicsLayer {
-                                rotationZ = if (isOpen) 90f else 0f
-                            }
-                        ) {
+                        Box(modifier = Modifier.graphicsLayer { rotationZ = if (isOpen) 90f else 0f }) {
                             PrecisionVectorIcon(
                                 name = "arrow_right",
-                                tint = if (isOpen && darkTheme) OttoTurquoise else MaterialTheme.colorScheme.onSurfaceVariant,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 size = 16.dp
                             )
                         }
@@ -3860,6 +4791,7 @@ fun BackupAndCloudSyncSubScreen(
     val lastSynced by vm.lastSyncedText.collectAsState()
     var supabaseUrl by remember { mutableStateOf(vm.syncManager.supabaseUrl) }
     var supabaseKey by remember { mutableStateOf(vm.syncManager.supabaseAnonKey) }
+    var zeroDbWebhook by remember { mutableStateOf(vm.syncManager.zeroDbWebhookUrl) }
     var showClearConfirm by remember { mutableStateOf(false) }
 
     val exportLauncher = rememberLauncherForActivityResult(
@@ -3995,6 +4927,15 @@ fun BackupAndCloudSyncSubScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
 
+                    OutlinedTextField(
+                        value = zeroDbWebhook,
+                        onValueChange = { zeroDbWebhook = it; vm.syncManager.zeroDbWebhookUrl = it },
+                        placeholder = { SingleLineText("Optional Zero-DB Webhook (Apps Script / Discord)") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(Spacing.SM),
@@ -4059,7 +5000,8 @@ fun BackupAndCloudSyncSubScreen(
 @Composable
 fun CategoriesAndMagicWordsSubScreen(
     vm: OttoViewModel,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onAskDeleteConfirmation: (String, String, () -> Unit) -> Unit
 ) {
     val categories by vm.categories.collectAsState()
     val rules by vm.keywordRules.collectAsState()
@@ -4187,7 +5129,16 @@ fun CategoriesAndMagicWordsSubScreen(
                             }
                         }
                         IconButton(
-                            onClick = { vm.deleteCategory(cat); if (selectedCat?.id == cat.id) selectedCat = null },
+                            onClick = {
+                                onAskDeleteConfirmation(
+                                    "Delete Category?",
+                                    "Delete '${cat.name}' and its magic words?",
+                                    {
+                                        vm.deleteCategoryWithUndo(cat)
+                                        if (selectedCat?.id == cat.id) selectedCat = null
+                                    }
+                                )
+                            },
                             modifier = Modifier.size(32.dp)
                         ) {
                             PrecisionVectorIcon("trash", BinanceRed, size = 15.dp)
@@ -4315,7 +5266,8 @@ fun ProfileAndWalletsSubScreen(
     vm: OttoViewModel,
     balances: Map<String, Double>,
     onEditWalletBalance: (WalletEntity) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onAskDeleteConfirmation: (String, String, () -> Unit) -> Unit
 ) {
     val userName by vm.userName.collectAsState()
     val monthlyBudget by vm.monthlyBudgetTarget.collectAsState()
@@ -4353,16 +5305,15 @@ fun ProfileAndWalletsSubScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(Spacing.MD), verticalArrangement = Arrangement.spacedBy(Spacing.SM)) {
-                    SingleLineText("Profile & Monthly Budget Cap", style = MaterialTheme.typography.titleLarge)
+                    SingleLineText("Profile & Monthly Cap", style = MaterialTheme.typography.titleLarge)
 
-                    // Monthly Cap Toggle Row
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            SingleLineText("Enable Monthly Budget Cap", style = MaterialTheme.typography.titleMedium)
+                            SingleLineText("Enable Monthly Cap", style = MaterialTheme.typography.titleMedium)
                             SingleLineText(
                                 "Show monthly spending limit & progress bar on Home",
                                 style = MaterialTheme.typography.bodyMedium,
@@ -4417,7 +5368,7 @@ fun ProfileAndWalletsSubScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(Spacing.MD), verticalArrangement = Arrangement.spacedBy(Spacing.SM)) {
-                    SingleLineText("Manage Spendable Wallets", style = MaterialTheme.typography.titleLarge)
+                    SingleLineText("Manage Wallets", style = MaterialTheme.typography.titleLarge)
                     Row(horizontalArrangement = Arrangement.spacedBy(Spacing.XS), verticalAlignment = Alignment.CenterVertically) {
                         OutlinedTextField(
                             value = newWalletName,
@@ -4462,7 +5413,7 @@ fun ProfileAndWalletsSubScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             SingleLineText(
-                                text = "${w.name} • ৳${liveBal.roundToInt()} spendable",
+                                text = "${w.name} • ৳${liveBal.roundToInt()}",
                                 style = MaterialTheme.typography.titleMedium,
                                 modifier = Modifier.weight(1f)
                             )
@@ -4471,7 +5422,16 @@ fun ProfileAndWalletsSubScreen(
                                     PrecisionVectorIcon("edit", MaterialTheme.colorScheme.onSurfaceVariant, size = 15.dp)
                                 }
                                 if (wallets.size > 1) {
-                                    IconButton(onClick = { vm.removeWallet(w.id) }, modifier = Modifier.size(32.dp)) {
+                                    IconButton(
+                                        onClick = {
+                                            onAskDeleteConfirmation(
+                                                "Delete Wallet?",
+                                                "Remove '${w.name}' from your wallets?",
+                                                { vm.removeWalletWithUndo(w) }
+                                            )
+                                        },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
                                         PrecisionVectorIcon("trash", BinanceRed, size = 15.dp)
                                     }
                                 }
@@ -4485,14 +5445,18 @@ fun ProfileAndWalletsSubScreen(
 }
 
 /**
- * V8 Quick-Add Bottom Sheet:
- * - Includes Custom Date Selector (`Today`, `Yesterday`, `2 Days Ago`, and `Pick Date` Calendar Dialog)
- *   so forgotten past expenses or income can be logged on any historical date!
- * - Includes an optional `Repeat Monthly` toggle to turn any expense or income into a confirmation-based recurring rule.
+ * V9 Quick-Add Bottom Sheet (`QuickAddV9BottomSheet`):
+ * 1. Fixes the status bar white-icon overlap when the keyboard opens by explicitly configuring
+ *    `WindowCompat.getInsetsController(dialogWindow, view).isAppearanceLightStatusBars = !darkTheme` on the DialogWindow!
+ * 2. Removes the `Repeat Monthly` checkbox (recurring rules are managed in `Settings → Scheduler`).
+ * 3. Replaces the multi-chip date row with a single clean **Date Bar** showing today's date (`YYYY-MM-DD`).
+ * 4. Animates the Category `LazyRow` (`categoryListState.animateScrollToItem(matchedIdx)`) with a spring pulse
+ *    whenever a Magic Word auto-selects a category!
+ * 5. Displays simply **`Save`** on the bottom button.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun QuickAddV8BottomSheet(
+fun QuickAddV9BottomSheet(
     defaultMode: String,
     initialFromWallet: String,
     initialToWallet: String,
@@ -4501,18 +5465,28 @@ fun QuickAddV8BottomSheet(
     vm: OttoViewModel,
     onDismiss: () -> Unit
 ) {
+    // Fix status bar icons turning white when ModalBottomSheet's DialogWindow opens over Light Mode!
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        SideEffect {
+            val dialogWindow = (view.parent as? DialogWindowProvider)?.window
+            dialogWindow?.let { win ->
+                val controller = WindowCompat.getInsetsController(win, view)
+                controller.isAppearanceLightStatusBars = !darkTheme
+                controller.isAppearanceLightNavigationBars = !darkTheme
+            }
+        }
+    }
+
     val wallets by vm.wallets.collectAsState()
     val categories by vm.categories.collectAsState()
     val rules by vm.keywordRules.collectAsState()
 
     val todayStr = remember { LocalDate.now().toString() }
-    val yesterdayStr = remember { LocalDate.now().minusDays(1).toString() }
-    val twoDaysAgoStr = remember { LocalDate.now().minusDays(2).toString() }
 
     var mode by remember { mutableStateOf(defaultMode) }
     var selectedDate by remember { mutableStateOf(todayStr) }
     var showDatePickerModal by remember { mutableStateOf(false) }
-    var makeRecurring by remember { mutableStateOf(false) }
 
     var amount by remember { mutableStateOf("") }
     var desc by remember { mutableStateOf("") }
@@ -4520,9 +5494,17 @@ fun QuickAddV8BottomSheet(
     var fromWallet by remember { mutableStateOf(initialFromWallet) }
     var toWallet by remember { mutableStateOf(initialToWallet) }
     var swapTrigger by remember { mutableIntStateOf(0) }
+    var autoMatchedPulseKey by remember { mutableIntStateOf(0) }
     var insufficientPopupMessage by remember { mutableStateOf<String?>(null) }
 
+    val categoryListState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+
     val evaluatedAmt = RuleEngine.evaluateMathExpression(amount)
+
+    val visibleModeCategories = remember(categories, mode) {
+        categories.filter { it.kind == mode }
+    }
 
     val isTransitWalletSelected = remember(fromWallet, mode) {
         val lower = fromWallet.lowercase()
@@ -4532,6 +5514,11 @@ fun QuickAddV8BottomSheet(
     LaunchedEffect(isTransitWalletSelected) {
         if (isTransitWalletSelected) {
             selectedCategory = "Transport"
+            val idx = visibleModeCategories.indexOfFirst { it.name == "Transport" }
+            if (idx >= 0) {
+                autoMatchedPulseKey++
+                categoryListState.animateScrollToItem(idx)
+            }
         }
     }
 
@@ -4540,20 +5527,17 @@ fun QuickAddV8BottomSheet(
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = Spacing.LG, vertical = Spacing.XS)
-            .navigationBarsPadding(),
+            .navigationBarsPadding()
+            .imePadding(),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // 1. Transaction Type
+        // 1. Transaction Type (Consistent terminology: Expense | Income | Transfer)
         SingleLineText("Transaction Type", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Row(horizontalArrangement = Arrangement.spacedBy(Spacing.SM), modifier = Modifier.fillMaxWidth()) {
             listOf("EXPENSE" to "Expense", "INCOME" to "Income", "TRANSFER" to "Transfer").forEach { (key, label) ->
                 val isSel = mode == key
-                val pillBg = if (isSel) {
-                    if (darkTheme) OttoTurquoise else SoftLavenderPill
-                } else MaterialTheme.colorScheme.surface
-                val pillText = if (isSel) {
-                    if (darkTheme) InkDark else SoftLavenderText
-                } else MaterialTheme.colorScheme.onSurface
+                val pillBg = if (isSel) OttoTurquoise else MaterialTheme.colorScheme.surface
+                val pillText = if (isSel) InkDark else MaterialTheme.colorScheme.onSurface
 
                 Surface(
                     shape = RoundedCornerShape(14.dp),
@@ -4580,60 +5564,31 @@ fun QuickAddV8BottomSheet(
             }
         }
 
-        // 2. Date Selector Row (Today | Yesterday | 2 Days Ago | Custom Calendar DatePicker!)
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+        // 2. Single Clean Date Bar Showing Selected Date (Defaults to Today's Date; no Today/Yesterday tags!)
+        SingleLineText("Date", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .bounceClick { showDatePickerModal = true }
         ) {
-            SingleLineText("Date", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            if (mode != "TRANSFER") {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.clickable { makeRecurring = !makeRecurring }
-                ) {
-                    Checkbox(
-                        checked = makeRecurring,
-                        onCheckedChange = { makeRecurring = it },
-                        modifier = Modifier.size(20.dp)
-                    )
-                    SingleLineText("Repeat Monthly", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        }
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(Spacing.XS)) {
-            item {
-                WalletChoicePill(
-                    label = "Today",
-                    selected = selectedDate == todayStr,
-                    darkTheme = darkTheme,
-                    onClick = { selectedDate = todayStr }
+            Row(
+                modifier = Modifier.fillMaxSize().padding(horizontal = Spacing.MD),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                SingleLineText(
+                    text = selectedDate,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
-            }
-            item {
-                WalletChoicePill(
-                    label = "Yesterday",
-                    selected = selectedDate == yesterdayStr,
-                    darkTheme = darkTheme,
-                    onClick = { selectedDate = yesterdayStr }
-                )
-            }
-            item {
-                WalletChoicePill(
-                    label = "2d Ago",
-                    selected = selectedDate == twoDaysAgoStr,
-                    darkTheme = darkTheme,
-                    onClick = { selectedDate = twoDaysAgoStr }
-                )
-            }
-            item {
-                val isCustomDate = selectedDate != todayStr && selectedDate != yesterdayStr && selectedDate != twoDaysAgoStr
-                WalletChoicePill(
-                    label = if (isCustomDate) "Date: $selectedDate" else "Pick Date...",
-                    selected = isCustomDate,
-                    darkTheme = darkTheme,
-                    onClick = { showDatePickerModal = true }
+                PrecisionVectorIcon(
+                    name = "calendar",
+                    tint = if (darkTheme) OttoTurquoise else OttoTurquoiseDeep,
+                    size = 18.dp
                 )
             }
         }
@@ -4686,15 +5641,24 @@ fun QuickAddV8BottomSheet(
             }
         }
 
-        // 4. Description (Multi-line capable)
+        // 4. Description (Triggers Smooth Auto-Scroll in Category LazyRow on Magic Word Match!)
         SingleLineText("Description", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         OutlinedTextField(
             value = desc,
-            onValueChange = {
-                desc = it
+            onValueChange = { newText ->
+                desc = newText
                 if (mode != "TRANSFER" && !isTransitWalletSelected) {
-                    RuleEngine.matchCategory(it, mode, rules)?.let { matched ->
-                        selectedCategory = matched.category
+                    RuleEngine.matchCategory(newText, mode, rules)?.let { matched ->
+                        if (selectedCategory != matched.category) {
+                            selectedCategory = matched.category
+                            val targetIdx = visibleModeCategories.indexOfFirst { it.name == matched.category }
+                            if (targetIdx >= 0) {
+                                autoMatchedPulseKey++
+                                scope.launch {
+                                    categoryListState.animateScrollToItem(targetIdx)
+                                }
+                            }
+                        }
                     }
                 }
             },
@@ -4744,7 +5708,7 @@ fun QuickAddV8BottomSheet(
                     },
                     modifier = Modifier.size(28.dp)
                 ) {
-                    PrecisionVectorIcon("transfer", if (darkTheme) OttoTurquoise else TransferBlue, size = 16.dp, triggerKey = swapTrigger)
+                    PrecisionVectorIcon("transfer", if (darkTheme) OttoTurquoise else OttoTurquoiseDeep, size = 16.dp, triggerKey = swapTrigger)
                 }
             }
             LazyRow(horizontalArrangement = Arrangement.spacedBy(Spacing.XS)) {
@@ -4764,6 +5728,7 @@ fun QuickAddV8BottomSheet(
                 }
             }
         } else {
+            // 5. Category Row with Smooth Auto-Scroll (`categoryListState`) & Spring Pulse on Magic Word Match!
             Row(verticalAlignment = Alignment.CenterVertically) {
                 SingleLineText("Category ", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 SingleLineText(
@@ -4772,25 +5737,38 @@ fun QuickAddV8BottomSheet(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(Spacing.XS)) {
-                items(categories.filter { it.kind == mode }) { cat ->
+            LazyRow(
+                state = categoryListState,
+                horizontalArrangement = Arrangement.spacedBy(Spacing.XS)
+            ) {
+                itemsIndexed(visibleModeCategories, key = { _, c -> c.id }) { _, cat ->
                     val isSel = selectedCategory == cat.name
                     val isDisabledByTransit = isTransitWalletSelected && cat.name != "Transport"
-                    WalletChoicePill(
-                        label = cat.name,
-                        selected = isSel,
-                        enabled = !isDisabledByTransit,
-                        darkTheme = darkTheme,
-                        onClick = {
-                            if (!isDisabledByTransit) {
-                                selectedCategory = cat.name
-                            }
+                    val pulseScale = remember { Animatable(1f) }
+                    LaunchedEffect(isSel, autoMatchedPulseKey) {
+                        if (isSel && autoMatchedPulseKey > 0) {
+                            pulseScale.snapTo(1.15f)
+                            pulseScale.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = Spring.StiffnessMedium))
                         }
-                    )
+                    }
+
+                    Box(modifier = Modifier.scale(pulseScale.value)) {
+                        WalletChoicePill(
+                            label = cat.name,
+                            selected = isSel,
+                            enabled = !isDisabledByTransit,
+                            darkTheme = darkTheme,
+                            onClick = {
+                                if (!isDisabledByTransit) {
+                                    selectedCategory = cat.name
+                                }
+                            }
+                        )
+                    }
                 }
             }
 
-            SingleLineText("Payment Method/Wallet Selection", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            SingleLineText("Wallet", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(Spacing.XS)) {
                 items(wallets) { w ->
                     val isSel = fromWallet == w.name
@@ -4806,7 +5784,7 @@ fun QuickAddV8BottomSheet(
                                 selectedCategory = "Transport"
                             }
                             if (mode == "EXPENSE" && evaluatedAmt > 0.0 && avail < evaluatedAmt) {
-                                insufficientPopupMessage = "You only have ৳${avail.roundToInt()} spendable in ${w.name}, which is less than ৳${evaluatedAmt.roundToInt()}."
+                                insufficientPopupMessage = "You only have ৳${avail.roundToInt()} available in ${w.name}, which is less than ৳${evaluatedAmt.roundToInt()}."
                             }
                         }
                     )
@@ -4816,12 +5794,13 @@ fun QuickAddV8BottomSheet(
 
         Spacer(Modifier.height(Spacing.XXS))
 
+        // 6. Save Button (Displays ONLY "Save" as requested!)
         Button(
             onClick = {
                 if (evaluatedAmt <= 0.0) return@Button
                 val avail = balances[fromWallet] ?: 0.0
                 if ((mode == "EXPENSE" || mode == "TRANSFER") && avail < evaluatedAmt) {
-                    insufficientPopupMessage = "Insufficient spendable balance in $fromWallet (Available: ৳${avail.roundToInt()}, Required: ৳${evaluatedAmt.roundToInt()})."
+                    insufficientPopupMessage = "Insufficient available balance in $fromWallet (Available: ৳${avail.roundToInt()}, Required: ৳${evaluatedAmt.roundToInt()})."
                     return@Button
                 }
                 val finalCategory = if (isTransitWalletSelected) "Transport" else selectedCategory
@@ -4834,32 +5813,19 @@ fun QuickAddV8BottomSheet(
                     toWallet = if (mode == "TRANSFER") toWallet else null,
                     date = selectedDate
                 )
-                if (makeRecurring && mode != "TRANSFER") {
-                    val chosenLocalDate = runCatching { LocalDate.parse(selectedDate) }.getOrDefault(LocalDate.now())
-                    vm.addRecurringRule(
-                        title = desc.ifBlank { finalCategory },
-                        type = mode,
-                        amount = evaluatedAmt,
-                        category = finalCategory,
-                        wallet = fromWallet,
-                        dayOfMonth = chosenLocalDate.dayOfMonth,
-                        notifyHour = 9,
-                        notifyMinute = 0
-                    )
-                }
                 onDismiss()
             },
             shape = RoundedCornerShape(26.dp),
             colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary
+                containerColor = OttoTurquoise,
+                contentColor = InkDark
             ),
             modifier = Modifier.fillMaxWidth().height(50.dp)
         ) {
             SingleLineText(
-                text = "Save ৳${evaluatedAmt.roundToInt()} (${if (selectedDate == todayStr) "Today" else selectedDate})",
+                text = "Save",
                 style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onPrimary
+                color = InkDark
             )
         }
     }
@@ -4880,7 +5846,7 @@ fun QuickAddV8BottomSheet(
                         showDatePickerModal = false
                     }
                 ) {
-                    SingleLineText("Select Date", color = MaterialTheme.colorScheme.onPrimary)
+                    SingleLineText("Select", color = MaterialTheme.colorScheme.onPrimary)
                 }
             },
             dismissButton = {
@@ -4916,12 +5882,9 @@ fun WalletChoicePill(
     darkTheme: Boolean,
     onClick: () -> Unit
 ) {
-    val pillBg = if (selected) {
-        if (darkTheme) OttoTurquoise else SoftLavenderPill
-    } else MaterialTheme.colorScheme.surface
-    val pillText = if (selected) {
-        if (darkTheme) InkDark else SoftLavenderText
-    } else MaterialTheme.colorScheme.onSurface
+    // Signature #6BD0C2 OttoTurquoise active pill in both Light Mode and Dark Mode!
+    val pillBg = if (selected) OttoTurquoise else MaterialTheme.colorScheme.surface
+    val pillText = if (selected) InkDark else MaterialTheme.colorScheme.onSurface
 
     Surface(
         shape = RoundedCornerShape(14.dp),
@@ -4981,7 +5944,7 @@ fun PrecisionVectorIcon(
     }
 
     Canvas(modifier = Modifier.size(size)) {
-        val stroke = Stroke(width = 1.85.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+        val stroke = Stroke(width = 1.9.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
         val w = this.size.width
         val h = this.size.height
         val p = progress.value
@@ -5045,6 +6008,19 @@ fun PrecisionVectorIcon(
                     drawRoundRect(tint, Offset(w * 0.16f, h * 0.16f), Size(w * 0.68f, h * 0.68f), CornerRadius(6.dp.toPx()), stroke)
                     drawCircle(tint, radius = w * 0.18f, center = Offset(w * 0.50f, h * 0.50f), style = stroke)
                     drawCircle(tint, radius = 1.8.dp.toPx(), center = Offset(w * 0.50f, h * 0.50f))
+                }
+            }
+            "bell" -> {
+                rotate(degrees = p * 18f) {
+                    val bellPath = Path().apply {
+                        moveTo(w * 0.22f, h * 0.68f)
+                        lineTo(w * 0.78f, h * 0.68f)
+                        lineTo(w * 0.72f, h * 0.38f)
+                        quadraticTo(w * 0.50f, h * 0.14f, w * 0.28f, h * 0.38f)
+                        close()
+                    }
+                    drawPath(bellPath, tint, style = stroke)
+                    drawArc(tint, 0f, 180f, false, Offset(w * 0.40f, h * 0.68f), Size(w * 0.20f, h * 0.18f), style = stroke)
                 }
             }
             "calendar" -> {

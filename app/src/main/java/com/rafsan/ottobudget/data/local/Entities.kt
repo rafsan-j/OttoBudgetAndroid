@@ -31,19 +31,11 @@ data class KeywordRuleEntity(
     val priority: Int = 80
 )
 
-/**
- * Transaction types:
- * - "EXPENSE"
- * - "INCOME"
- * - "TRANSFER"
- * - "VAULT_LOCK" (Subtracts from `wallet` spendable balance and assigns to Vault Goal ID stored in `toWallet`, never counts as an expense!)
- * - "VAULT_RELEASE" (Releases funds from Vault Goal ID stored in `toWallet` back into `wallet` spendable balance!)
- */
 @Entity(tableName = "transactions")
 data class TransactionEntity(
     @PrimaryKey val id: String,
     val date: String,
-    val type: String,
+    val type: String, // "EXPENSE", "INCOME", "TRANSFER", "VAULT_LOCK", "VAULT_RELEASE"
     val amount: Double,
     val category: String,
     val wallet: String,
@@ -54,30 +46,18 @@ data class TransactionEntity(
     val isSynced: Boolean = false
 )
 
-/**
- * Separate Savings Vault Goal with Wallet-Specific Criteria:
- * - `allowedWallets`: Comma-separated list of wallets allowed to fund this goal (e.g. "bKash,Bank Card,Cash").
- * - `minWalletFloor`: Minimum spendable balance that must remain in a wallet after assigning money to this goal.
- * - `autoRuleType`: "MANUAL", "INCOME_PERCENT", or "EXCESS_SWEEP".
- */
 @Entity(tableName = "vault_goals")
 data class VaultGoalEntity(
     @PrimaryKey val id: String,
     val title: String,
     val targetAmount: Double,
-    val allowedWallets: String, // e.g., "bKash,Bank Card,Cash"
-    val minWalletFloor: Double, // e.g., 500.0 (keep at least ৳500 spendable in source wallet)
-    val autoRuleType: String = "MANUAL", // "MANUAL", "INCOME_10_PCT", "ROUND_UP"
+    val allowedWallets: String,
+    val minWalletFloor: Double,
+    val autoRuleType: String = "MANUAL",
     val iconName: String = "vault",
     val createdAt: Long = System.currentTimeMillis()
 )
 
-/**
- * Confirmation-Based Recurring Expense / Income Rule:
- * - Never modifies wallet balances automatically!
- * - Surfaces a Pending Confirmation banner on the Home screen on or after `dayOfMonth` each month
- *   (until `lastConfirmedPeriod == currentYearMonth`), and schedules a local notification at `notifyHour:notifyMinute`.
- */
 @Entity(tableName = "recurring_rules")
 data class RecurringRuleEntity(
     @PrimaryKey val id: String,
@@ -90,17 +70,13 @@ data class RecurringRuleEntity(
     val notifyHour: Int = 9,
     val notifyMinute: Int = 0,
     val enabled: Boolean = true,
-    val lastConfirmedPeriod: String = "" // e.g. "2026-11"
+    val lastConfirmedPeriod: String = ""
 )
 
-/**
- * Opt-In On-Device SMS / Notification Auto-Parser Detection Queue:
- * - Holds detected bKash, Nagad, Rocket, and Bangladeshi Bank alerts for 1-tap user confirmation on the Home screen.
- */
 @Entity(tableName = "pending_sms_detections")
 data class PendingSmsDetectionEntity(
     @PrimaryKey val id: String,
-    val provider: String, // "bKash", "Nagad", "Rocket", "Bank Card"
+    val provider: String,
     val type: String, // "EXPENSE", "INCOME", "TRANSFER"
     val amount: Double,
     val fee: Double,

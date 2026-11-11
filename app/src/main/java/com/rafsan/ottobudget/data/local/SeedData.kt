@@ -1,7 +1,6 @@
 package com.rafsan.ottobudget.data.local
 
 object SeedData {
-    // 4 Core Liquid/Card Wallets (Savings now lives in the dedicated Savings Vault!)
     val defaultWallets = listOf(
         WalletEntity("w_bkash", "bKash", "LIQUID", 0.0, "Mobile Wallet", 0xFFE11D48),
         WalletEntity("w_card", "Bank Card", "CARDS", 0.0, "Debit / Credit", 0xFF1E293B),
@@ -9,7 +8,6 @@ object SeedData {
         WalletEntity("w_transit", "Transit Pass", "CARDS", 0.0, "Rapid / Metro Pass", 0xFF0284C7)
     )
 
-    // Default Vault Goals (Zero initial balance, ready for user assignment with Wallet Criteria!)
     val defaultVaultGoals = listOf(
         VaultGoalEntity(
             id = "goal_iphone",

@@ -29,12 +29,10 @@
             </intent-filter>
         </activity>
 
-        <!-- Scheduled Recurring Expense/Income Confirmation Notification Receiver -->
         <receiver
             android:name=".RecurringReminderReceiver"
             android:exported="false" />
 
-        <!-- Opt-In Offline SMS Auto-Parser Receiver for bKash, Nagad, Rocket & BD Banks -->
         <receiver
             android:name=".SmsBroadcastReceiver"
             android:exported="true"
@@ -44,7 +42,6 @@
             </intent-filter>
         </receiver>
 
-        <!-- Opt-In Offline Notification Auto-Parser Service for bKash, Nagad & Banking Apps -->
         <service
             android:name=".OttoNotificationListenerService"
             android:label="OttoBudget Smart MFS &amp; Bank Alert Parser"

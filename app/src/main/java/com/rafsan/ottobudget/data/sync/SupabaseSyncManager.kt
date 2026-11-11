@@ -50,10 +50,6 @@ class SupabaseSyncManager(
         get() = prefs.getBoolean("vault_pin_lock_enabled", true)
         set(value) { prefs.edit().putBoolean("vault_pin_lock_enabled", value).commit() }
 
-    var vaultStealthHideTab: Boolean
-        get() = prefs.getBoolean("vault_stealth_hide_tab", false)
-        set(value) { prefs.edit().putBoolean("vault_stealth_hide_tab", value).commit() }
-
     var pinHash: String
         get() = prefs.getString("security_pin_hash", "") ?: ""
         set(value) { prefs.edit().putString("security_pin_hash", value).commit() }
@@ -93,6 +89,10 @@ class SupabaseSyncManager(
         get() = prefs.getString("supabase_key", "") ?: ""
         set(value) = prefs.edit().putString("supabase_key", value.trim()).apply()
 
+    var zeroDbWebhookUrl: String
+        get() = prefs.getString("zero_db_webhook_url", "") ?: ""
+        set(value) = prefs.edit().putString("zero_db_webhook_url", value.trim()).apply()
+
     var autoSyncEnabled: Boolean
         get() = prefs.getBoolean("auto_sync_enabled", false)
         set(value) = prefs.edit().putBoolean("auto_sync_enabled", value).apply()
@@ -102,8 +102,45 @@ class SupabaseSyncManager(
         set(value) = prefs.edit().putString("last_synced_label", value).apply()
 
     var hasSeenOnboarding: Boolean
-        get() = prefs.getBoolean("seen_onboarding_v6", false)
-        set(value) = prefs.edit().putBoolean("seen_onboarding_v6", value).apply()
+        get() = prefs.getBoolean("seen_onboarding_v9", false)
+        set(value) { prefs.edit().putBoolean("seen_onboarding_v9", value).commit() }
+
+    var hasSeenSpotlightTour: Boolean
+        get() = prefs.getBoolean("seen_tour_v9", false)
+        set(value) { prefs.edit().putBoolean("seen_tour_v9", value).commit() }
+
+    var onboardingSummaryJson: String
+        get() = prefs.getString("onboarding_answers_json", "{}") ?: "{}"
+        set(value) = prefs.edit().putString("onboarding_answers_json", value).apply()
+
+    /**
+     * Zero-Database Telemetry / Onboarding Receiver:
+     * Sends the user's onboarding profile answers to a stateless Webhook URL (Google Apps Script Web App,
+     * Google Forms endpoint, Discord Webhook, Telegram Bot API, or Formspree) without requiring any database!
+     */
+    suspend fun postOnboardingAnswersZeroDatabase(answers: Map<String, String>): Result<Unit> = withContext(Dispatchers.IO) {
+        val json = JSONObject()
+        answers.forEach { (k, v) -> json.put(k, v) }
+        json.put("timestamp", LocalDateTime.now().toString())
+        onboardingSummaryJson = json.toString()
+
+        val webhook = zeroDbWebhookUrl.trim()
+        if (webhook.isBlank()) return@withContext Result.success(Unit)
+
+        runCatching {
+            val payload = JSONObject().apply {
+                // Compatible with Discord Webhooks (`content`), Slack (`text`), and Google Apps Script / Formspree (`data`)
+                put("content", "New OttoBudget Onboarding Profile: " + json.toString())
+                put("text", "New OttoBudget Onboarding Profile: " + json.toString())
+                put("data", json)
+            }
+            val req = Request.Builder()
+                .url(webhook)
+                .post(payload.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+            client.newCall(req).execute().close()
+        }
+    }
 
     private fun deriveAesKey(secretSeed: String): SecretKeySpec {
         val digest = MessageDigest.getInstance("SHA-256").digest(("otto_v6_salt_" + secretSeed).toByteArray(Charsets.UTF_8))
@@ -137,7 +174,7 @@ class SupabaseSyncManager(
 
     private suspend fun buildVaultJsonString(): String {
         val root = JSONObject()
-        root.put("version", 8)
+        root.put("version", 9)
         root.put("userName", userName)
         root.put("monthlyBudget", monthlyBudget)
         root.put("monthlyCapEnabled", monthlyCapEnabled)

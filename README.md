@@ -1,23 +1,23 @@
-# OttoBudget V8 — Minimalist Offline-First Expense, Income, Recurring & Savings Vault Tracker
+# OttoBudget V9 — Minimalist Offline-First Expense, Income, Scheduler & Savings Vault Tracker
 
 **OttoBudget** is a fast, privacy-first native Android personal finance application built with **Kotlin**, **Jetpack Compose (Material 3)**, **AndroidX Biometric**, and **Room SQLite**.
 
-## Key Features in V8
-- **Separate PIN/Biometric Savings Vault with Spendable Wallet Subtraction**:
-  - Create dedicated savings goals (e.g., *"New iPhone"*, *"Gift for Parents"*, *"Emergency Fund"*) with **per-wallet criteria** (Allowed Wallets & Minimum Spendable Wallet Floor protection).
-  - Assigning money from `Cash`, `bKash`, or `Bank Card` into a Vault goal **immediately subtracts that amount from your visible spendable wallet balance** so you never accidentally spend earmarked savings—without inflating your Monthly Expense Cap.
-  - Accessible via the **Spendable | Savings Vault** switcher on the Wallets screen or via a **stealth long-press on the Home Total Balance card**, protected by your 4-digit iOS Passcode and Device Biometrics when Vault Lock is enabled.
-- **Confirmation-Based Recurring Expenses & Income with Scheduled Notifications**:
-  - Schedule recurring bills (e.g., *House Rent*, *WiFi*) or regular income (*Part-Time Job*, *Tuition*) for any day of the month and exact notification time (`HH:MM`).
-  - Balances are **never** added or subtracted automatically—on the due date, a local notification fires and a **Pending Recurring Confirmation** banner appears on the Home screen waiting for your 1-tap confirmation.
-- **Opt-In On-Device SMS & Notification Auto-Parser (bKash, Nagad, Rocket & BD Banks)**:
-  - 100% offline regex parser (`MfsSmsNotificationParser`) detects incoming transaction SMS/notifications (extracting Amount, Fee, `TrxID`, and Wallet) and displays a 1-tap **"Log ৳250 from bKash?"** confirmation pill on the Home screen.
-- **Custom Date Picker in Quick-Add**:
-  - Log forgotten past expenses, income, or transfers for any date using 1-tap `Today`, `Yesterday`, `2 Days Ago`, or the full Calendar Date Picker dialog.
-- **Toggleable Monthly Cap**:
-  - Enable or disable the Monthly Budget Cap ceiling and progress bar anytime in Settings.
-- **Clean Matte-Frosted Navigation Dock (Zero Border Glow / Zero Horizontal Line)**:
-  - Refined floating dock with uniform matte hairline borders, transparent system navigation bar integration, and multi-part animated vector icons.
+## Key Features in V9
+- **Seamless Transparent-Background Winking Otto Splash**:
+  - Uses a pure-white transparent-background silhouette (`otto_v9_transparent.webp`) over a full-screen `#6BD0C2` turquoise canvas with zero square borders, animating Otto's right eye into a smooth wink on launch.
+- **Unified `#6BD0C2` Otto Turquoise Signature Theme (Light & Dark Mode)**:
+  - Light Mode pairs crisp white cards with the signature `#6BD0C2` Otto Turquoise accent palette, while Dark Mode pairs deep obsidian surfaces with `#6BD0C2`—persisting your theme choice across app restarts.
+- **Zero-API Conversational AI-Chat Onboarding & Interactive Spotlight Tour**:
+  - Otto interviews you through an animated chat interface (with bouncing typing indicators, quick-select pills, custom text input, progress bar, and `"skip"` support) and guides you through a 4-step animated spotlight tour.
+  - Supports optional **Zero-Database Telemetry Forwarding** via Google Forms / Google Apps Script or Discord/Telegram webhooks.
+- **Redesigned Wallets Screen (`Available | Total` Pills + Floating Vault Button)**:
+  - Switch between **Available** (net spendable balance after Vault deductions) and **Total** (actual full balance in the wallet) at the top of Wallets, with clean `Balance • <Wallet>` card headers and a **Floating Savings Vault Button** at the bottom-right.
+  - Every Vault Goal is 100% editable (rename, change icon, adjust target amount, edit wallet criteria, and directly adjust assigned amounts per wallet).
+- **Press & Hold to Edit Past Transactions + Delete Confirmation & Undo**:
+  - Long-press any transaction on Home or Ledger to edit its Type, Amount, Description, Category, Wallet, or Date.
+  - Deleting any item requires confirmation and pops up an **Undo** snackbar to restore accidental deletions.
+- **Floating Notification / SMS Alert Button on Home**:
+  - Appears at the bottom-right of the Home screen *only* when new on-device bKash/Nagad/Rocket/Bank SMS alerts or due **Scheduler** items are waiting for your confirmation.
 
 ## Building from Source
 1. Clone this repository and open the root folder in **Android Studio**.

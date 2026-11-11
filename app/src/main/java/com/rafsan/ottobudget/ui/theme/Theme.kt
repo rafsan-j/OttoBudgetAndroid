@@ -13,11 +13,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.rafsan.ottobudget.R
 
+// Unified Brand Signature: App Icon Turquoise (#6BD0C2) in BOTH Light Mode and Dark Mode!
 val OttoTurquoise = Color(0xFF6BD0C2)
-val OttoTurquoiseDeep = Color(0xFF45B3A4)
+val OttoTurquoiseDeep = Color(0xFF2E9E8F)
+val OttoTurquoiseSoftLight = Color(0xFFE3F7F4)
 val OttoTurquoiseSoftDark = Color(0xFF1A3332)
-val SoftLavenderPill = Color(0xFFE8DEF8)
-val SoftLavenderText = Color(0xFF1D192B)
 val BinanceGreen = Color(0xFF0ECB81)
 val BinanceRed = Color(0xFFF6465D)
 val BinanceDarkBg = Color(0xFF0B0E11)
@@ -27,8 +27,8 @@ val BinanceLightText = Color(0xFFEAECEF)
 val BinanceMutedText = Color(0xFF8A94A6)
 val TransferBlue = Color(0xFF3B82F6)
 val VaultEmerald = Color(0xFF10B981)
-val InkDark = Color(0xFF11141A)
-val MonochromeBoxLight = Color(0xFFECEEF2)
+val InkDark = Color(0xFF0F1720)
+val MonochromeBoxLight = Color(0xFFEBF5F3)
 val MonochromeBoxDark = Color(0xFF232934)
 
 val SansFontFamily = FontFamily(
@@ -39,20 +39,22 @@ val SansFontFamily = FontFamily(
     Font(R.font.sans_bold, FontWeight.ExtraBold)
 )
 
-private val CleanLightScheme = lightColorScheme(
-    primary = InkDark,
-    onPrimary = Color(0xFFFFFFFF),
+// Light Mode now uses OttoTurquoise (#6BD0C2) + White surfaces to maintain the brand signature!
+private val OttoLightScheme = lightColorScheme(
+    primary = OttoTurquoise,
+    onPrimary = InkDark,
     secondary = OttoTurquoiseDeep,
-    tertiary = SoftLavenderPill,
-    background = Color(0xFFF7F8FA),
+    tertiary = OttoTurquoiseSoftLight,
+    background = Color(0xFFF5FAF9),
     surface = Color(0xFFFFFFFF),
-    surfaceVariant = Color(0xFFECEEF2),
+    surfaceVariant = Color(0xFFEAF4F2),
     onBackground = InkDark,
     onSurface = InkDark,
-    onSurfaceVariant = Color(0xFF68707E),
-    outline = Color(0xFFE2E6EC)
+    onSurfaceVariant = Color(0xFF5A6B68),
+    outline = Color(0xFFD9EBE7)
 )
 
+// Dark Mode kept as-is (#0B0E11 / #151921 + #6BD0C2 OttoTurquoise)
 private val OttoDarkScheme = darkColorScheme(
     primary = OttoTurquoise,
     onPrimary = InkDark,
@@ -121,7 +123,7 @@ fun OttoBudgetTheme(
     content: @Composable () -> Unit
 ) {
     MaterialTheme(
-        colorScheme = if (darkTheme) OttoDarkScheme else CleanLightScheme,
+        colorScheme = if (darkTheme) OttoDarkScheme else OttoLightScheme,
         typography = OttoTypography,
         content = content
     )

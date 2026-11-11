@@ -13,6 +13,11 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 
+data class UndoDeletedPayload(
+    val label: String,
+    val restoreAction: suspend () -> Unit
+)
+
 class OttoViewModel(application: Application) : AndroidViewModel(application) {
     private val appContext = application.applicationContext
     private val db = AppDatabase.getInstance(application)
@@ -30,6 +35,7 @@ class OttoViewModel(application: Application) : AndroidViewModel(application) {
     val isDarkTheme = MutableStateFlow(syncManager.isDarkMode)
     val showSplashWink = MutableStateFlow(true)
     val showOnboarding = MutableStateFlow(!syncManager.hasSeenOnboarding)
+    val showSpotlightTour = MutableStateFlow(false)
 
     // App Lock & Savings Vault Lock States
     val isPinLockEnabled = MutableStateFlow(syncManager.pinLockEnabled)
@@ -37,7 +43,6 @@ class OttoViewModel(application: Application) : AndroidViewModel(application) {
     val isAppLocked = MutableStateFlow(syncManager.pinLockEnabled)
 
     val isVaultLockEnabled = MutableStateFlow(syncManager.vaultPinLockEnabled)
-    val isVaultStealthMode = MutableStateFlow(syncManager.vaultStealthHideTab)
     val isVaultSessionUnlocked = MutableStateFlow(!syncManager.vaultPinLockEnabled)
 
     // Feature Toggles
@@ -51,6 +56,22 @@ class OttoViewModel(application: Application) : AndroidViewModel(application) {
     val autoSyncState = MutableStateFlow(syncManager.autoSyncEnabled)
     val lastSyncedText = MutableStateFlow(syncManager.lastSyncedLabel)
     val statusMessage = MutableStateFlow<String?>(null)
+
+    // Undo Delete StateFlow (emits whenever an item is deleted so UI shows an Undo snackbar!)
+    val pendingUndoEvent = MutableStateFlow<UndoDeletedPayload?>(null)
+
+    fun clearUndoEvent() {
+        pendingUndoEvent.value = null
+    }
+
+    fun executeUndo(payload: UndoDeletedPayload) {
+        viewModelScope.launch {
+            payload.restoreAction()
+            pendingUndoEvent.value = null
+            statusMessage.value = "Restored ${payload.label}"
+            triggerAutoSyncIfEnabled()
+        }
+    }
 
     fun toggleDarkTheme() {
         val next = !isDarkTheme.value
@@ -67,7 +88,7 @@ class OttoViewModel(application: Application) : AndroidViewModel(application) {
     fun toggleRecurringFeature(enabled: Boolean) {
         isRecurringEnabled.value = enabled
         syncManager.recurringFeatureEnabled = enabled
-        statusMessage.value = if (enabled) "Recurring confirmations enabled" else "Recurring confirmations paused"
+        statusMessage.value = if (enabled) "Scheduler enabled" else "Scheduler paused"
     }
 
     fun toggleSmsParser(enabled: Boolean) {
@@ -81,12 +102,6 @@ class OttoViewModel(application: Application) : AndroidViewModel(application) {
         syncManager.vaultPinLockEnabled = enabled
         isVaultSessionUnlocked.value = !enabled
         statusMessage.value = if (enabled) "Savings Vault protected by PIN/Biometrics" else "Savings Vault lock disabled"
-    }
-
-    fun toggleVaultStealth(enabled: Boolean) {
-        isVaultStealthMode.value = enabled
-        syncManager.vaultStealthHideTab = enabled
-        statusMessage.value = if (enabled) "Stealth Vault Mode ON (Long-press Total Balance or Wallets header)" else "Stealth Vault Mode OFF"
     }
 
     fun unlockVaultSession() {
@@ -162,6 +177,92 @@ class OttoViewModel(application: Application) : AndroidViewModel(application) {
         showSplashWink.value = false
     }
 
+    fun completeChatOnboarding(
+        chosenName: String,
+        incomePref: String,
+        walletPref: String,
+        capAnswer: String,
+        vaultGoalAnswer: String
+    ) {
+        val cleanName = chosenName.trim().ifBlank { "User" }
+        userName.value = cleanName
+        syncManager.userName = cleanName
+
+        // Parse Monthly Cap answer
+        if (capAnswer.lowercase().contains("no") || capAnswer.lowercase().contains("off")) {
+            isMonthlyCapEnabled.value = false
+            syncManager.monthlyCapEnabled = false
+        } else {
+            val digits = Regex("[0-9]+").findAll(capAnswer.replace(",", "")).mapNotNull { it.value.toDoubleOrNull() }.firstOrNull()
+            if (digits != null && digits > 0.0) {
+                monthlyBudgetTarget.value = digits
+                syncManager.monthlyBudget = digits
+            }
+            isMonthlyCapEnabled.value = true
+            syncManager.monthlyCapEnabled = true
+        }
+
+        viewModelScope.launch {
+            // If user picked Nagad in wallet preferences, ensure Nagad wallet exists
+            if (walletPref.lowercase().contains("nagad")) {
+                val existing = dao.getAllWalletsOnce().any { it.name.equals("Nagad", ignoreCase = true) }
+                if (!existing) {
+                    dao.upsertWallet(WalletEntity("w_nagad", "Nagad", "LIQUID", 0.0, "Mobile Wallet", 0xFFF97316))
+                }
+            }
+            // If user entered a custom Vault Goal during onboarding, create it
+            val cleanGoal = vaultGoalAnswer.trim()
+            if (cleanGoal.isNotEmpty() && !cleanGoal.lowercase().contains("later") && !cleanGoal.lowercase().contains("skip")) {
+                val existingGoals = dao.getAllVaultGoalsOnce()
+                if (existingGoals.none { it.title.equals(cleanGoal, ignoreCase = true) }) {
+                    dao.upsertVaultGoal(
+                        VaultGoalEntity(
+                            id = "goal_onb_${System.currentTimeMillis()}",
+                            title = cleanGoal,
+                            targetAmount = 20000.0,
+                            allowedWallets = "bKash,Bank Card,Cash",
+                            minWalletFloor = 500.0,
+                            iconName = "vault"
+                        )
+                    )
+                }
+            }
+
+            syncManager.postOnboardingAnswersZeroDatabase(
+                mapOf(
+                    "name" to cleanName,
+                    "incomeSources" to incomePref,
+                    "wallets" to walletPref,
+                    "monthlyCap" to capAnswer,
+                    "firstVaultGoal" to vaultGoalAnswer
+                )
+            )
+        }
+
+        syncManager.hasSeenOnboarding = true
+        showOnboarding.value = false
+        if (!syncManager.hasSeenSpotlightTour) {
+            showSpotlightTour.value = true
+        }
+    }
+
+    fun skipChatOnboarding() {
+        syncManager.hasSeenOnboarding = true
+        showOnboarding.value = false
+        if (!syncManager.hasSeenSpotlightTour) {
+            showSpotlightTour.value = true
+        }
+    }
+
+    fun finishSpotlightTour() {
+        syncManager.hasSeenSpotlightTour = true
+        showSpotlightTour.value = false
+    }
+
+    fun replaySpotlightTour() {
+        showSpotlightTour.value = true
+    }
+
     fun toggleAutoSync(enabled: Boolean) {
         syncManager.autoSyncEnabled = enabled
         autoSyncState.value = enabled
@@ -191,11 +292,9 @@ class OttoViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Spendable Wallet Balance Calculation:
-     * - "VAULT_LOCK" subtracts from `tx.wallet` so assigned savings are immediately removed from spendable balance!
-     * - "VAULT_RELEASE" adds the released savings back into `tx.wallet` spendable balance!
+     * Computes Available (Spendable) Wallet Balances (`VAULT_LOCK` subtracted, `VAULT_RELEASE` added back).
      */
-    fun computeWalletBalances(walletList: List<WalletEntity>, txList: List<TransactionEntity>): Map<String, Double> {
+    fun computeAvailableWalletBalances(walletList: List<WalletEntity>, txList: List<TransactionEntity>): Map<String, Double> {
         val map = walletList.associate { it.name to it.initialBalance }.toMutableMap()
         txList.forEach { tx ->
             when (tx.type) {
@@ -217,9 +316,23 @@ class OttoViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Computes how much money is currently saved inside each Vault Goal (`goal.id`),
-     * broken down by which source wallet (`bKash`, `Bank Card`, `Cash`) holds the funds.
+     * Computes Total (Actual) Wallet Balances physically sitting in each wallet (ignoring Vault deductions).
      */
+    fun computeTotalActualWalletBalances(walletList: List<WalletEntity>, txList: List<TransactionEntity>): Map<String, Double> {
+        val map = walletList.associate { it.name to it.initialBalance }.toMutableMap()
+        txList.forEach { tx ->
+            when (tx.type) {
+                "EXPENSE" -> map[tx.wallet] = (map[tx.wallet] ?: 0.0) - tx.amount
+                "INCOME" -> map[tx.wallet] = (map[tx.wallet] ?: 0.0) + tx.amount
+                "TRANSFER" -> {
+                    map[tx.wallet] = (map[tx.wallet] ?: 0.0) - tx.amount
+                    tx.toWallet?.let { dest -> map[dest] = (map[dest] ?: 0.0) + tx.amount }
+                }
+            }
+        }
+        return map
+    }
+
     fun computeVaultGoalHoldings(txList: List<TransactionEntity>): Map<String, Map<String, Double>> {
         val result = mutableMapOf<String, MutableMap<String, Double>>()
         txList.forEach { tx ->
@@ -235,30 +348,25 @@ class OttoViewModel(application: Application) : AndroidViewModel(application) {
         return result
     }
 
-    /**
-     * Assigns money from `sourceWallet` into `goal`, enforcing the goal's Wallet Criteria:
-     * 1. `sourceWallet` must be in `goal.allowedWallets`.
-     * 2. Remaining spendable balance in `sourceWallet` must stay >= `goal.minWalletFloor`.
-     */
     fun assignMoneyToVaultGoal(
         goal: VaultGoalEntity,
         sourceWallet: String,
         amount: Double,
-        currentSpendableBalances: Map<String, Double>
+        currentAvailableBalances: Map<String, Double>
     ): String? {
         if (amount <= 0.0) return "Enter an amount greater than ৳0"
         val allowed = goal.allowedWallets.split(",").map { it.trim() }.filter { it.isNotEmpty() }
         if (allowed.isNotEmpty() && sourceWallet !in allowed) {
-            return "$sourceWallet is not in the allowed wallets criteria for '${goal.title}' (${allowed.joinToString(", ")})."
+            return "$sourceWallet is not in the allowed wallets for '${goal.title}' (${allowed.joinToString(", ")})."
         }
-        val avail = currentSpendableBalances[sourceWallet] ?: 0.0
+        val avail = currentAvailableBalances[sourceWallet] ?: 0.0
         val remainingAfter = avail - amount
         if (remainingAfter < 0.0) {
-            return "Insufficient spendable balance in $sourceWallet (Available: ৳${avail.toInt()})."
+            return "Insufficient available balance in $sourceWallet (Available: ৳${avail.toInt()})."
         }
         if (remainingAfter < goal.minWalletFloor) {
             val maxAssignable = (avail - goal.minWalletFloor).coerceAtLeast(0.0)
-            return "Wallet Floor Criteria: '${goal.title}' requires keeping at least ৳${goal.minWalletFloor.toInt()} spendable in $sourceWallet. Max you can assign right now is ৳${maxAssignable.toInt()}."
+            return "Wallet Floor Criteria: '${goal.title}' keeps at least ৳${goal.minWalletFloor.toInt()} available in $sourceWallet. Max you can assign is ৳${maxAssignable.toInt()}."
         }
 
         viewModelScope.launch {
@@ -309,6 +417,53 @@ class OttoViewModel(application: Application) : AndroidViewModel(application) {
         return null
     }
 
+    /**
+     * Full Edit for a Savings Vault Goal:
+     * Updates Goal Title, Icon, Target Amount, Allowed Wallets, Min Floor, AND directly adjusts assigned amounts per wallet!
+     */
+    fun updateVaultGoalAndHoldings(
+        goal: VaultGoalEntity,
+        newTitle: String,
+        newTargetAmount: Double,
+        newIconName: String,
+        newAllowedWallets: String,
+        newMinFloor: Double,
+        updatedWalletHoldings: Map<String, Double>
+    ) {
+        val cleanTitle = newTitle.trim().ifBlank { goal.title }
+        viewModelScope.launch {
+            dao.upsertVaultGoal(
+                goal.copy(
+                    title = cleanTitle,
+                    targetAmount = newTargetAmount.coerceAtLeast(1.0),
+                    iconName = newIconName,
+                    allowedWallets = newAllowedWallets.ifBlank { goal.allowedWallets },
+                    minWalletFloor = newMinFloor.coerceAtLeast(0.0)
+                )
+            )
+            // Replace per-wallet holdings with the exact edited amounts
+            dao.clearVaultAllocationsForGoal(goal.id)
+            updatedWalletHoldings.forEach { (wName, amt) ->
+                if (amt > 0.0) {
+                    dao.upsertTransaction(
+                        TransactionEntity(
+                            id = "vlock_edit_${goal.id}_${wName}_${System.currentTimeMillis()}",
+                            date = LocalDate.now().toString(),
+                            type = "VAULT_LOCK",
+                            amount = amt,
+                            category = "Savings Vault",
+                            wallet = wName,
+                            toWallet = goal.id,
+                            description = "Assigned to $cleanTitle from $wName"
+                        )
+                    )
+                }
+            }
+            statusMessage.value = "Updated $cleanTitle"
+            triggerAutoSyncIfEnabled()
+        }
+    }
+
     fun addVaultGoal(
         title: String,
         targetAmount: Double,
@@ -334,16 +489,22 @@ class OttoViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun deleteVaultGoal(goal: VaultGoalEntity) {
+    fun deleteVaultGoalWithUndo(goal: VaultGoalEntity) {
         viewModelScope.launch {
+            val savedAllocations = dao.getVaultAllocationsForGoalOnce(goal.id)
             dao.clearVaultAllocationsForGoal(goal.id)
             dao.deleteVaultGoalById(goal.id)
-            statusMessage.value = "Deleted ${goal.title} & returned funds to spendable wallets"
+            pendingUndoEvent.value = UndoDeletedPayload(
+                label = goal.title,
+                restoreAction = {
+                    dao.upsertVaultGoal(goal)
+                    if (savedAllocations.isNotEmpty()) dao.insertTransactions(savedAllocations)
+                }
+            )
             triggerAutoSyncIfEnabled()
         }
     }
 
-    // Recurring Expenses & Income Management (Confirmation-Based!)
     fun addRecurringRule(
         title: String,
         type: String,
@@ -385,7 +546,7 @@ class OttoViewModel(application: Application) : AndroidViewModel(application) {
         if (rule.type == "EXPENSE") {
             val avail = currentBalances[rule.wallet] ?: 0.0
             if (avail < rule.amount) {
-                return "Insufficient balance in ${rule.wallet} (Available: ৳${avail.toInt()}, Due: ৳${rule.amount.toInt()})."
+                return "Insufficient available balance in ${rule.wallet} (Available: ৳${avail.toInt()}, Due: ৳${rule.amount.toInt()})."
             }
         }
         viewModelScope.launch {
@@ -398,7 +559,7 @@ class OttoViewModel(application: Application) : AndroidViewModel(application) {
                     category = rule.category,
                     wallet = rule.wallet,
                     toWallet = null,
-                    description = "${rule.title} (Recurring)"
+                    description = "${rule.title} (Scheduled)"
                 )
             )
             dao.markRecurringRuleConfirmed(rule.id, currentPeriod)
@@ -423,16 +584,21 @@ class OttoViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun deleteRecurringRule(rule: RecurringRuleEntity) {
+    fun deleteRecurringRuleWithUndo(rule: RecurringRuleEntity) {
         viewModelScope.launch {
             RecurringAlarmScheduler.scheduleRecurringNotification(appContext, rule.copy(enabled = false))
             dao.deleteRecurringRuleById(rule.id)
-            statusMessage.value = "Removed recurring rule: ${rule.title}"
+            pendingUndoEvent.value = UndoDeletedPayload(
+                label = rule.title,
+                restoreAction = {
+                    dao.upsertRecurringRule(rule)
+                    RecurringAlarmScheduler.scheduleRecurringNotification(appContext, rule)
+                }
+            )
             triggerAutoSyncIfEnabled()
         }
     }
 
-    // Opt-In On-Device SMS / Notification Auto-Parser Confirmation & Simulation
     fun simulateOrParseSmsText(sender: String, rawSms: String) {
         val parsed = MfsSmsNotificationParser.parseIncomingAlert(sender, rawSms)
         if (parsed == null) {
@@ -446,7 +612,7 @@ class OttoViewModel(application: Application) : AndroidViewModel(application) {
                 title = "Detected ${parsed.provider} Alert",
                 body = parsed.summaryText
             )
-            statusMessage.value = "Detected: ${parsed.summaryText}"
+            statusMessage.value = "New alert ready in Home Notification button!"
         }
     }
 
@@ -457,7 +623,7 @@ class OttoViewModel(application: Application) : AndroidViewModel(application) {
         if (detection.type == "EXPENSE" || detection.type == "TRANSFER") {
             val avail = currentBalances[detection.wallet] ?: 0.0
             if (avail < detection.amount) {
-                return "Insufficient balance in ${detection.wallet} (Available: ৳${avail.toInt()}, Alert: ৳${detection.amount.toInt()})."
+                return "Insufficient available balance in ${detection.wallet} (Available: ৳${avail.toInt()}, Alert: ৳${detection.amount.toInt()})."
             }
         }
         viewModelScope.launch {
@@ -533,17 +699,15 @@ class OttoViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun removeWallet(walletId: String) {
+    fun removeWalletWithUndo(wallet: WalletEntity) {
         viewModelScope.launch {
-            dao.deleteWalletById(walletId)
-            statusMessage.value = "Wallet removed"
+            dao.deleteWalletById(wallet.id)
+            pendingUndoEvent.value = UndoDeletedPayload(
+                label = wallet.name,
+                restoreAction = { dao.upsertWallet(wallet) }
+            )
             triggerAutoSyncIfEnabled()
         }
-    }
-
-    fun completeOnboarding() {
-        syncManager.hasSeenOnboarding = true
-        showOnboarding.value = false
     }
 
     fun addTransaction(
@@ -576,9 +740,45 @@ class OttoViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun deleteTransaction(tx: TransactionEntity) {
+    /**
+     * Edit an existing past transaction (Triggered via Long-Press on any transaction row!).
+     */
+    fun updateExistingTransaction(
+        original: TransactionEntity,
+        newType: String,
+        newAmount: Double,
+        newDescription: String,
+        newCategory: String,
+        newWallet: String,
+        newToWallet: String?,
+        newDate: String
+    ) {
+        if (newAmount <= 0.0) return
+        viewModelScope.launch {
+            dao.upsertTransaction(
+                original.copy(
+                    type = newType,
+                    amount = newAmount,
+                    description = newDescription.trim().ifBlank { if (newType == "TRANSFER") "$newWallet to $newToWallet" else newCategory },
+                    category = if (newType == "TRANSFER") "Transfer" else newCategory,
+                    wallet = newWallet,
+                    toWallet = if (newType == "TRANSFER") newToWallet else null,
+                    date = newDate,
+                    updatedAt = System.currentTimeMillis()
+                )
+            )
+            statusMessage.value = "Transaction updated"
+            triggerAutoSyncIfEnabled()
+        }
+    }
+
+    fun deleteTransactionWithUndo(tx: TransactionEntity) {
         viewModelScope.launch {
             dao.deleteTransaction(tx)
+            pendingUndoEvent.value = UndoDeletedPayload(
+                label = tx.description.ifBlank { tx.category },
+                restoreAction = { dao.upsertTransaction(tx) }
+            )
             triggerAutoSyncIfEnabled()
         }
     }
@@ -620,11 +820,18 @@ class OttoViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun deleteCategory(cat: CategoryEntity) {
+    fun deleteCategoryWithUndo(cat: CategoryEntity) {
         viewModelScope.launch {
+            val existingRules = dao.getAllKeywordRulesOnce().filter { it.category == cat.name }
             dao.deleteCategoryById(cat.id)
             dao.deleteRulesForCategory(cat.name)
-            statusMessage.value = "Removed ${cat.name}"
+            pendingUndoEvent.value = UndoDeletedPayload(
+                label = cat.name,
+                restoreAction = {
+                    dao.upsertCategory(cat)
+                    if (existingRules.isNotEmpty()) dao.insertKeywordRules(existingRules)
+                }
+            )
             triggerAutoSyncIfEnabled()
         }
     }

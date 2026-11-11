@@ -21,16 +21,16 @@ import kotlinx.coroutines.launch
 import java.util.Calendar
 
 object RecurringAlarmScheduler {
-    private const val CHANNEL_ID = "otto_recurring_channel"
+    private const val CHANNEL_ID = "otto_scheduler_channel"
 
     fun ensureNotificationChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "Recurring Bills & Income Confirmations",
+                "Scheduler & Smart MFS Confirmations",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "Reminds you to confirm scheduled recurring expenses and income."
+                description = "Reminds you to confirm scheduled expenses/income and detected SMS alerts."
             }
             val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             nm.createNotificationChannel(channel)
@@ -117,16 +117,16 @@ class RecurringReminderReceiver : BroadcastReceiver() {
         val prefs = context.getSharedPreferences("ottobudget_v6_prefs", Context.MODE_PRIVATE)
         if (!prefs.getBoolean("recurring_feature_enabled", true)) return
 
-        val title = intent.getStringExtra("rule_title") ?: "Scheduled Transaction"
+        val title = intent.getStringExtra("rule_title") ?: "Scheduled Item"
         val amount = intent.getDoubleExtra("rule_amount", 0.0).toInt()
         val type = intent.getStringExtra("rule_type") ?: "EXPENSE"
         val wallet = intent.getStringExtra("rule_wallet") ?: "Cash"
 
-        val verb = if (type == "INCOME") "Add +৳$amount to $wallet" else "Deduct -৳$amount from $wallet"
+        val verb = if (type == "INCOME") "Confirm Income +৳$amount to $wallet" else "Confirm Expense -৳$amount from $wallet"
         RecurringAlarmScheduler.postImmediateNotification(
             context = context,
-            title = "Confirm Recurring ${if (type == "INCOME") "Income" else "Expense"}: $title",
-            body = "Tap to confirm: $verb (Balance updates only after your confirmation)."
+            title = "Scheduler Due: $title",
+            body = "$verb (Tap notification button on Home to confirm)."
         )
     }
 }
@@ -148,7 +148,7 @@ class SmsBroadcastReceiver : BroadcastReceiver() {
             AppDatabase.getInstance(context).appDao().insertPendingSmsDetection(parsed)
             RecurringAlarmScheduler.postImmediateNotification(
                 context = context,
-                title = "Detected ${parsed.provider} Transaction",
+                title = "New ${parsed.provider} Alert Detected",
                 body = parsed.summaryText
             )
         }

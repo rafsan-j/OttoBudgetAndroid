@@ -19,7 +19,7 @@ import kotlinx.coroutines.launch
         RecurringRuleEntity::class,
         PendingSmsDetectionEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -34,7 +34,7 @@ abstract class AppDatabase : RoomDatabase() {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
-                    "ottobudget_v8_release.db"
+                    "ottobudget_v9_release.db"
                 )
                     .fallbackToDestructiveMigration()
                     .addCallback(object : Callback() {
